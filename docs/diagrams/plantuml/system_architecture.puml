@@ -1,0 +1,36 @@
+@startuml
+title GeoVisLM System Architecture
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+actor User
+
+package "GeoVisLM" {
+  component "Web Dashboard\nFastAPI / Future UI" as Dashboard
+  component "CLI Runner\nTyper Scripts" as CLI
+  component "GIS Engine\nRasterio / GeoPandas / GDAL" as GIS
+  component "QGIS Workflow Layer\nPyQGIS Future" as QGIS
+  component "Scientific Visualization Engine\nParaView / VTK" as ParaView
+  component "GeoMiniLM\nDomain-Specific LLM" as LLM
+  component "Report Generator\nMarkdown / PDF" as Reports
+  database "Project Storage\nData / Outputs / Models" as Storage
+}
+
+User --> Dashboard
+User --> CLI
+
+Dashboard --> GIS
+CLI --> GIS
+
+GIS --> Storage
+GIS --> QGIS
+GIS --> ParaView
+GIS --> LLM
+
+LLM --> Reports
+QGIS --> Reports
+ParaView --> Reports
+Reports --> Storage
+
+@enduml

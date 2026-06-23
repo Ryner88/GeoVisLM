@@ -1,0 +1,34 @@
+@startuml
+title GeoMiniLM Workflow
+
+skinparam shadowing false
+
+actor User
+
+component "User Request" as Request
+component "Prompt Normalizer" as Normalizer
+component "GeoMiniLM" as LLM
+component "Workflow Validator" as Validator
+component "GIS Executor" as GIS
+component "ParaView Executor" as ParaView
+component "Report Generator" as Reports
+database "Workflow Dataset" as Dataset
+database "Outputs" as Outputs
+
+User --> Request
+Request --> Normalizer
+Normalizer --> LLM
+
+Dataset --> LLM
+
+LLM --> Validator
+Validator --> GIS
+Validator --> ParaView
+
+GIS --> Outputs
+ParaView --> Outputs
+
+Outputs --> Reports
+Reports --> User
+
+@enduml

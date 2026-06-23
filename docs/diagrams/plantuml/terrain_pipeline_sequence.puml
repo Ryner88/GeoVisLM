@@ -1,0 +1,38 @@
+@startuml
+title GeoVisLM Terrain Pipeline Sequence
+
+actor User
+participant "CLI Runner" as CLI
+participant "GIS Terrain Module" as Terrain
+database "Raw Data" as Raw
+database "Processed Outputs" as Outputs
+participant "QGIS" as QGIS
+participant "Report Generator\nFuture" as Reports
+
+User -> CLI: run terrain analysis with DEM path
+CLI -> Raw: read DEM GeoTIFF
+Raw --> CLI: DEM path
+
+CLI -> Terrain: load_dem()
+Terrain --> CLI: DEM array, profile, transform, CRS
+
+CLI -> Terrain: calculate_slope_degrees()
+Terrain --> CLI: slope raster
+
+CLI -> Terrain: calculate_hillshade()
+Terrain --> CLI: hillshade raster
+
+CLI -> Terrain: classify_slope_risk()
+Terrain --> CLI: risk raster
+
+CLI -> Outputs: save slope_degrees.tif
+CLI -> Outputs: save hillshade.tif
+CLI -> Outputs: save terrain_risk.tif
+
+User -> QGIS: open generated GeoTIFFs
+QGIS -> Outputs: load map layers
+
+CLI -> Reports: generate summary report later
+Reports -> Outputs: save report
+
+@enduml
