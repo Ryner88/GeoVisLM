@@ -50,3 +50,7 @@ Compare GeoMiniLM output against expected workflow JSON.
 ### `[TODO]` Add Demo Video and Portfolio Page
 
 Create a short demo video, screenshots, and a polished project page.
+
+### `[TODO]` Install/check system GDAL tools when sudo access is available
+
+Install and verify `gdalinfo` and `ogrinfo` once interactive sudo access is available.

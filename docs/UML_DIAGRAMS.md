@@ -16,6 +16,12 @@ Exported images are stored in:
 docs/diagrams/images/
 ```
 
+Optional Astah project files are stored in:
+
+```text
+docs/diagrams/astah/
+```
+
 ## Diagrams
 
 ### 1. System Architecture
@@ -98,17 +104,19 @@ Shows how the domain-specific LLM converts user requests into structured GIS and
 
 ## Exporting PlantUML Images
 
-Install PlantUML:
+If PlantUML is already installed, export all diagrams with:
 
 ```bash
-sudo apt install -y plantuml graphviz
+JAVA_TOOL_OPTIONS=-Djava.awt.headless=true plantuml -tpng docs/diagrams/plantuml/*.puml -o ../images
 ```
 
-Export all diagrams:
+If a desktop/headless setting is not needed in your environment, this also works:
 
 ```bash
 plantuml -tpng docs/diagrams/plantuml/*.puml -o ../images
 ```
+
+Do not treat missing PlantUML as a project failure. The `.puml` files are the source of truth and can be exported later.
 
 ## Astah Option
 

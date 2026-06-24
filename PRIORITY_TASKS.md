@@ -9,47 +9,47 @@ Status labels:
 
 ## Priority Queue
 
-### 1. `[TODO]` Build Initial Terrain Analysis Pipeline
+### 1. `[TODO]` Add UML Diagrams and Exported Images
 
-Goal: create the first working GIS analysis pipeline for DEM terrain data.
+Goal: document the system architecture visually.
 
 Build:
 
-- DEM raster loader
-- Slope calculation
-- Hillshade generation
-- Terrain risk classification
-- GeoTIFF export
-- CLI runner
+- system architecture PlantUML diagram
+- component diagram
+- terrain pipeline sequence diagram
+- GeoMiniLM workflow diagram
+- exported PNG images under `docs/diagrams/images/`
 
 Acceptance criteria:
 
-- User can run terrain analysis from the command line.
-- Outputs are saved under `outputs/maps/`.
-- Generated rasters can be opened in QGIS.
-- Pipeline handles missing file errors cleanly.
+- `.puml` files exist under `docs/diagrams/plantuml/`
+- exported images exist under `docs/diagrams/images/`
+- `docs/UML_DIAGRAMS.md` references every diagram
+- README links to `docs/UML_DIAGRAMS.md`
 
-Why priority: this proves the geospatial foundation before adding AI.
+Why priority: diagrams make the project easier to understand and portfolio-ready.
 
 ---
 
 ### 2. `[TODO]` Add QGIS Workflow Documentation
 
-Goal: document how generated files are opened and styled in QGIS.
+Goal: document how generated GeoTIFF outputs should be opened and styled in QGIS.
 
 Build:
 
 - QGIS import steps
-- Layer styling guide
-- Recommended color ramps
-- Map export instructions
-- Screenshots/images folder
+- slope layer styling guide
+- hillshade layer styling guide
+- terrain risk layer styling guide
+- map export instructions
+- screenshot/export placeholder locations
 
 Acceptance criteria:
 
-- A user can open generated slope, hillshade, and risk layers in QGIS.
-- Documentation includes enough steps to reproduce the map view.
-- At least one exported QGIS map image is stored in `docs/diagrams/images/` or `outputs/maps/`.
+- A user can open `slope_degrees.tif`, `hillshade.tif`, and `terrain_risk.tif` in QGIS.
+- Documentation explains layer order and styling.
+- README links to the QGIS workflow document.
 
 Why priority: the project needs visible portfolio outputs early.
 
@@ -57,22 +57,20 @@ Why priority: the project needs visible portfolio outputs early.
 
 ### 3. `[TODO]` Add ParaView Terrain Visualization Script
 
-Goal: generate a first ParaView-compatible visualization script.
+Goal: create the first ParaView-compatible terrain visualization script.
 
 Build:
 
-- Convert DEM/raster output into a visualization-friendly format
-- Create `paraview_scene.py`
-- Load terrain data
-- Apply elevation coloring
-- Configure camera
-- Export render image
+- script placeholder under `geovis_lm/viz/`
+- documented input/output expectations
+- output location under `outputs/renders/`
+- future support for `pvpython` or ParaView GUI execution
 
 Acceptance criteria:
 
-- ParaView or `pvpython` can run the script.
-- A terrain render image is exported under `outputs/renders/`.
-- Script is documented in the README.
+- Script exists and is documented.
+- README explains how ParaView will be used.
+- Priority task notes current limitation if ParaView is not installed.
 
 Why priority: ParaView is a major part of the scientific visualization showcase.
 
@@ -80,43 +78,20 @@ Why priority: ParaView is a major part of the scientific visualization showcase.
 
 ### 4. `[TODO]` Create GeoMiniLM Dataset Format
 
-Goal: define the training/evaluation format for the small domain-specific LLM.
+Goal: define the dataset format for the custom geospatial/scientific visualization LLM.
 
 Build:
 
-- Prompt format
-- Workflow JSON format
-- Example QGIS workflows
-- Example ParaView workflows
-- Dataset folder structure
+- dataset folder structure
+- starter JSONL format
+- prompt-to-workflow examples
+- QGIS workflow examples
+- ParaView workflow examples
 
 Acceptance criteria:
 
-- At least 20 starter examples exist.
-- Each example maps a user request to structured workflow output.
-- Dataset can later be used for tokenizer/model training.
+- At least 10 starter examples exist.
+- Each example has an instruction, inputs, expected workflow, and explanation.
+- Format is documented.
 
 Why priority: the custom LLM needs structured data before training.
-
----
-
-### 5. `[TODO]` Add UML Diagrams and Exported Images
-
-Goal: document the system architecture visually.
-
-Build:
-
-- System architecture diagram
-- Component diagram
-- Terrain pipeline sequence diagram
-- GeoMiniLM workflow diagram
-- Export PNG images from PlantUML or Astah
-
-Acceptance criteria:
-
-- `.puml` source files exist under `docs/diagrams/plantuml/`.
-- Exported images exist under `docs/diagrams/images/`.
-- `docs/UML_DIAGRAMS.md` references all diagrams.
-- README links to the UML documentation.
-
-Why priority: diagrams make the project easier to understand and portfolio-ready.
