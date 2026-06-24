@@ -42,3 +42,7 @@ The first MVP focuses on terrain analysis:
 - [UML Diagram Documentation](docs/UML_DIAGRAMS.md)
 - PlantUML sources: `docs/diagrams/plantuml/`
 - Exported images: `docs/diagrams/images/`
+
+## QGIS Workflow
+
+- [QGIS Terrain Workflow](docs/QGIS_WORKFLOW.md)

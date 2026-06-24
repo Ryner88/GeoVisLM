@@ -40,3 +40,41 @@ Notes:
 
 - System `gdalinfo` and `ogrinfo` are not installed yet because `sudo apt update` requires an interactive password.
 - This is not blocking the MVP because Rasterio/GeoPandas pipeline validation succeeded.
+
+### `[DONE]` Add UML Diagrams and Exported Images
+
+Implemented:
+
+- System architecture PlantUML diagram
+- Component diagram
+- Terrain pipeline sequence diagram
+- GeoMiniLM workflow diagram
+- Exported PNG images under `docs/diagrams/images/`
+- UML documentation in `docs/UML_DIAGRAMS.md`
+- README link to `docs/UML_DIAGRAMS.md`
+
+Verified:
+
+- `.puml` files exist under `docs/diagrams/plantuml/`
+- exported images exist under `docs/diagrams/images/`
+- `docs/UML_DIAGRAMS.md` references every diagram
+- README links to the UML documentation
+
+### `[DONE]` Add QGIS Workflow Documentation
+
+Implemented:
+
+- QGIS import steps
+- Recommended layer order
+- Slope layer styling guide
+- Hillshade layer styling guide
+- Terrain risk layer styling guide
+- Map export instructions
+- Screenshot/export placeholder locations under `docs/qgis/`
+- README link to `docs/QGIS_WORKFLOW.md`
+
+Verified:
+
+- Documentation explains how to open `slope_degrees.tif`, `hillshade.tif`, and `terrain_risk.tif` in QGIS.
+- Documentation explains layer order and styling.
+- README links to the QGIS workflow document.
