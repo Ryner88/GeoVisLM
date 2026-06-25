@@ -169,3 +169,29 @@ Notes:
 
 - The dashboard does not require ParaView or QGIS for the basic terrain workflow.
 - `python-multipart` is not installed, so DEM uploads use raw request bytes instead of multipart form uploads.
+
+### `[DONE]` Add Vector Layer Support
+
+Implemented:
+
+- Vector utilities in `geovis_lm/gis/vector.py`
+- GeoJSON, JSON, and Shapefile extension support
+- Vector loading through GeoPandas
+- Geometry and CRS validation
+- CRS detection
+- Reprojection to raster CRS
+- Raster-bounds clipping
+- GeoJSON export
+- CLI entry point at `scripts/process_vector_overlay.py`
+- Sample GeoJSON overlay at `data/sample/sample_overlay.geojson`
+- README workflow documentation
+
+Verified:
+
+- `python3 -m py_compile geovis_lm/gis/vector.py`
+- `python3 scripts/process_vector_overlay.py --help`
+- Sample GeoJSON overlay can be loaded, validated, clipped to the sample DEM, and exported to GeoJSON.
+
+Notes:
+
+- Shapefile support depends on the project GeoPandas/Fiona stack, which is available in `.venv`.

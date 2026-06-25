@@ -1,0 +1,31 @@
+{
+  "type": "FeatureCollection",
+  "name": "sample_overlay",
+  "crs": {
+    "type": "name",
+    "properties": {
+      "name": "urn:ogc:def:crs:EPSG::4326"
+    }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "sample_area",
+        "kind": "area_of_interest"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [0.0, 0.0],
+            [0.0, 1.0],
+            [1.0, 1.0],
+            [1.0, 0.0],
+            [0.0, 0.0]
+          ]
+        ]
+      }
+    }
+  ]
+}

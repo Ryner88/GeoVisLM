@@ -9,61 +9,7 @@ Status labels:
 
 ## Priority Queue
 
-### 1. `[TODO]` Add Vector Layer Support
-
-Goal: support GeoJSON and Shapefile overlays such as rivers, roads, buildings, and administrative boundaries.
-
-Build:
-
-* Add vector package under `geovis_lm/gis/vector.py`.
-* Add functions to:
-
-  * load vector layers with GeoPandas
-  * validate geometry
-  * detect CRS
-  * reproject to match a raster CRS
-  * clip vector layers to DEM bounds
-  * export processed vectors to GeoJSON
-* Support at least:
-
-  * `.geojson`
-  * `.json`
-  * `.shp`
-* Add optional vector overlay metadata to reports.
-* Prepare dashboard upload support for vector files.
-* Document sample vector workflow.
-
-Suggested functions:
-
-```python
-load_vector(path)
-validate_vector(gdf)
-reproject_vector(gdf, target_crs)
-clip_vector_to_raster_bounds(gdf, raster_path)
-write_vector_geojson(gdf, output_path)
-```
-
-Acceptance criteria:
-
-* GeoJSON vector layer can be loaded and validated.
-* Shapefile vector layer can be loaded if dependencies are available.
-* Vector CRS can be matched to DEM/raster CRS.
-* Vector layer can be clipped to DEM bounds.
-* Processed vector layer can be exported to GeoJSON.
-* README documents the supported vector formats and workflow.
-
-Validation:
-
-```bash
-python3 -m py_compile geovis_lm/gis/vector.py
-python3 scripts/process_vector_overlay.py --help
-```
-
-Why priority: vector overlays unlock realistic GIS analysis beyond single-raster terrain outputs.
-
----
-
-### 2. `[TODO]` Add QGIS Processing Integration
+### 1. `[TODO]` Add QGIS Processing Integration
 
 Goal: use PyQGIS or QGIS Processing algorithms for slope, hillshade, buffers, clipping, and map rendering.
 
@@ -113,7 +59,7 @@ Why priority: QGIS integration improves analytical credibility and prepares the 
 
 ---
 
-### 3. `[TODO]` Add PostGIS Storage
+### 2. `[TODO]` Add PostGIS Storage
 
 Goal: store uploaded layers, metadata, runs, and outputs in PostgreSQL/PostGIS for persistent dashboard workflows.
 

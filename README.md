@@ -123,3 +123,18 @@ For a local demo without uploading bytes manually, create a run and call:
 ```bash
 curl -X POST http://127.0.0.1:8000/api/runs/<run_id>/use-sample-dem
 ```
+
+## Vector Overlays
+
+GeoVisLM supports basic vector overlay processing for GeoJSON, JSON, and
+Shapefile inputs through GeoPandas:
+
+```bash
+.venv/bin/python scripts/process_vector_overlay.py \
+  --vector data/sample/sample_overlay.geojson \
+  --raster data/sample/sample_dem.tif \
+  --output data/processed/sample_overlay_clipped.geojson
+```
+
+The workflow validates geometry and CRS metadata, reprojects vectors to match
+the raster CRS, clips features to the raster bounds, and exports GeoJSON.
