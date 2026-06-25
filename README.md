@@ -158,3 +158,17 @@ python geovis_lm/qgis/processing_workflow.py \
   --dem data/sample/sample_dem.tif \
   --output-dir outputs/qgis
 ```
+
+## PostGIS Storage
+
+PostGIS storage is optional. GeoVisLM keeps generated files on disk and can
+store run, layer, output, report, and visualization metadata in PostgreSQL when
+`GEOVIS_DATABASE_URL` is configured.
+
+```bash
+cp .env.example .env
+python3 scripts/init_postgis.py --dry-run
+python3 scripts/init_postgis.py --print-sql
+```
+
+See `docs/POSTGIS_SCHEMA.md` for the table layout and setup notes.

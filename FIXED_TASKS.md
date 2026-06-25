@@ -217,3 +217,29 @@ Verified:
 Notes:
 
 - QGIS must be installed separately for real Processing execution.
+
+### `[DONE]` Add PostGIS Storage
+
+Implemented:
+
+- Optional storage package under `geovis_lm/storage/`
+- Database helper module at `geovis_lm/storage/db.py`
+- PostGIS schema documentation at `docs/POSTGIS_SCHEMA.md`
+- Schema SQL for runs, uploaded layers, outputs, reports, and visualizations
+- Configurable `GEOVIS_DATABASE_URL`
+- `.env.example` database settings
+- Initialization CLI at `scripts/init_postgis.py`
+- Dry-run and print-SQL modes that work without a configured database
+- README setup instructions
+
+Verified:
+
+- `python3 -m py_compile geovis_lm/storage/db.py`
+- `python3 scripts/init_postgis.py --help`
+- `python3 scripts/init_postgis.py --dry-run`
+- `python3 scripts/init_postgis.py --print-sql`
+
+Notes:
+
+- The project still works in file-only mode when PostGIS is not configured.
+- A real PostGIS connection requires installing the optional `psycopg` package.
