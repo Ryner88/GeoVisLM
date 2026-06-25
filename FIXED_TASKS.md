@@ -78,3 +78,23 @@ Verified:
 - Documentation explains how to open `slope_degrees.tif`, `hillshade.tif`, and `terrain_risk.tif` in QGIS.
 - Documentation explains layer order and styling.
 - README links to the QGIS workflow document.
+
+### `[DONE]` Add ParaView Terrain Visualization Script
+
+Implemented:
+
+- ParaView-compatible terrain rendering script at `geovis_lm/viz/paraview_terrain.py`
+- Documented DEM input expectation and render outputs
+- Default outputs under `outputs/renders/`
+- `pvpython` execution path with lazy ParaView imports
+- README usage notes and current ParaView/GDAL reader limitation
+
+Verified:
+
+- Script compiles with the project Python interpreter.
+- README documents how ParaView will be used.
+
+Notes:
+
+- ParaView is not installed through `requirements.txt`; run the script with a local ParaView `pvpython` install.
+- GeoTIFF input support depends on ParaView being built with GDAL raster reader support.

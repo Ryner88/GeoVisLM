@@ -9,28 +9,7 @@ Status labels:
 
 ## Priority Queue
 
-### 1. `[TODO]` Add ParaView Terrain Visualization Script
-
-Goal: create the first ParaView-compatible terrain visualization script.
-
-Build:
-
-- script placeholder under `geovis_lm/viz/`
-- documented input/output expectations
-- output location under `outputs/renders/`
-- future support for `pvpython` or ParaView GUI execution
-
-Acceptance criteria:
-
-- Script exists and is documented.
-- README explains how ParaView will be used.
-- Priority task notes current limitation if ParaView is not installed.
-
-Why priority: ParaView is a major part of the scientific visualization showcase.
-
----
-
-### 2. `[TODO]` Create GeoMiniLM Dataset Format
+### 1. `[TODO]` Create GeoMiniLM Dataset Format
 
 Goal: define the dataset format for the custom geospatial/scientific visualization LLM.
 

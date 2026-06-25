@@ -46,3 +46,22 @@ The first MVP focuses on terrain analysis:
 ## QGIS Workflow
 
 - [QGIS Terrain Workflow](docs/QGIS_WORKFLOW.md)
+
+## ParaView Terrain Visualization
+
+GeoVisLM includes a first ParaView-compatible terrain rendering entry point at
+`geovis_lm/viz/paraview_terrain.py`. It is intended to run with ParaView's
+Python interpreter:
+
+```bash
+pvpython geovis_lm/viz/paraview_terrain.py data/sample/sample_dem.tif
+```
+
+Expected outputs are written under `outputs/renders/`:
+
+- `terrain.png` screenshot render
+- `terrain.pvsm` ParaView state file for interactive refinement
+
+Current limitation: ParaView and `pvpython` are not installed by the project
+requirements. The script must be run in an environment where ParaView includes
+GDAL raster reader support for GeoTIFF DEM inputs.
