@@ -195,3 +195,25 @@ Verified:
 Notes:
 
 - Shapefile support depends on the project GeoPandas/Fiona stack, which is available in `.venv`.
+
+### `[DONE]` Add QGIS Processing Integration
+
+Implemented:
+
+- Optional QGIS package under `geovis_lm/qgis/`
+- QGIS processing workflow script at `geovis_lm/qgis/processing_workflow.py`
+- Lazy PyQGIS import with a clear missing-dependency message
+- Planned slope and hillshade outputs under `outputs/qgis/`
+- `--plan-only` mode for environments without QGIS
+- README setup limitation and usage examples
+
+Verified:
+
+- `python3 -m py_compile geovis_lm/qgis/processing_workflow.py`
+- `python3 geovis_lm/qgis/processing_workflow.py --help`
+- `python3 geovis_lm/qgis/processing_workflow.py --dem data/sample/sample_dem.tif --output-dir outputs/qgis --plan-only`
+- Missing PyQGIS exits with a clear message.
+
+Notes:
+
+- QGIS must be installed separately for real Processing execution.

@@ -138,3 +138,23 @@ Shapefile inputs through GeoPandas:
 
 The workflow validates geometry and CRS metadata, reprojects vectors to match
 the raster CRS, clips features to the raster bounds, and exports GeoJSON.
+
+## QGIS Processing
+
+QGIS integration is optional because PyQGIS is installed with QGIS, not the
+project virtual environment. The script can show planned outputs without QGIS:
+
+```bash
+python3 geovis_lm/qgis/processing_workflow.py \
+  --dem data/sample/sample_dem.tif \
+  --output-dir outputs/qgis \
+  --plan-only
+```
+
+Run the workflow with a Python environment configured for QGIS Processing:
+
+```bash
+python geovis_lm/qgis/processing_workflow.py \
+  --dem data/sample/sample_dem.tif \
+  --output-dir outputs/qgis
+```

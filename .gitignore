@@ -9,6 +9,7 @@ outputs/maps/*
 outputs/renders/*
 outputs/reports/*
 outputs/runs/*
+outputs/qgis/*
 
 !data/raw/.gitkeep
 !data/processed/.gitkeep
@@ -16,6 +17,7 @@ outputs/runs/*
 !outputs/renders/.gitkeep
 !outputs/reports/.gitkeep
 !outputs/runs/.gitkeep
+!outputs/qgis/.gitkeep
 
 .env
 *.qgz
