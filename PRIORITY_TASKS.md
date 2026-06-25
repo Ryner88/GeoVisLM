@@ -9,63 +9,7 @@ Status labels:
 
 ## Priority Queue
 
-### 1. `[TODO]` Add Web Dashboard
-
-Goal: build a FastAPI dashboard for uploading DEM files, running terrain analysis jobs, and viewing generated outputs.
-
-Build:
-
-* Add dashboard package under `geovis_lm/dashboard/`.
-* Add FastAPI app, for example:
-
-  * `geovis_lm/dashboard/app.py`
-* Add upload endpoint for DEM files.
-* Add run endpoint to execute terrain analysis.
-* Add output listing endpoint.
-* Add report generation endpoint once the report generator exists.
-* Add static file serving for generated maps, renders, and reports.
-* Add simple HTML templates or JSON-first API responses.
-* Add run output folders, for example:
-
-  * `outputs/runs/<run_id>/maps/`
-  * `outputs/runs/<run_id>/renders/`
-  * `outputs/runs/<run_id>/reports/`
-* Add README usage instructions.
-
-Suggested endpoints:
-
-```text
-GET  /
-POST /api/runs
-POST /api/runs/{run_id}/upload-dem
-POST /api/runs/{run_id}/analyze
-POST /api/runs/{run_id}/report
-GET  /api/runs/{run_id}
-GET  /api/runs/{run_id}/outputs
-```
-
-Acceptance criteria:
-
-* User can start the dashboard locally with Uvicorn.
-* User can upload a DEM file.
-* User can run terrain analysis from the dashboard/API.
-* User can view generated output paths.
-* User can generate or link to a report.
-* Dashboard does not require ParaView or QGIS for the basic terrain workflow.
-* README documents how to start and use the dashboard.
-
-Validation:
-
-```bash
-python3 -m py_compile geovis_lm/dashboard/app.py
-uvicorn geovis_lm.dashboard.app:app --reload
-```
-
-Why priority: a dashboard turns the CLI pipeline into a usable workflow and creates the foundation for demos.
-
----
-
-### 2. `[TODO]` Add Vector Layer Support
+### 1. `[TODO]` Add Vector Layer Support
 
 Goal: support GeoJSON and Shapefile overlays such as rivers, roads, buildings, and administrative boundaries.
 
@@ -119,7 +63,7 @@ Why priority: vector overlays unlock realistic GIS analysis beyond single-raster
 
 ---
 
-### 3. `[TODO]` Add QGIS Processing Integration
+### 2. `[TODO]` Add QGIS Processing Integration
 
 Goal: use PyQGIS or QGIS Processing algorithms for slope, hillshade, buffers, clipping, and map rendering.
 
@@ -169,7 +113,7 @@ Why priority: QGIS integration improves analytical credibility and prepares the 
 
 ---
 
-### 4. `[TODO]` Add PostGIS Storage
+### 3. `[TODO]` Add PostGIS Storage
 
 Goal: store uploaded layers, metadata, runs, and outputs in PostgreSQL/PostGIS for persistent dashboard workflows.
 

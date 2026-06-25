@@ -8,12 +8,14 @@ data/processed/*
 outputs/maps/*
 outputs/renders/*
 outputs/reports/*
+outputs/runs/*
 
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 !outputs/maps/.gitkeep
 !outputs/renders/.gitkeep
 !outputs/reports/.gitkeep
+!outputs/runs/.gitkeep
 
 .env
 *.qgz

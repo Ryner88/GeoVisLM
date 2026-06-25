@@ -98,3 +98,28 @@ python scripts/generate_report.py \
   --output-md outputs/reports/terrain_analysis.md \
   --output-pdf outputs/reports/terrain_analysis.pdf
 ```
+
+## Dashboard
+
+The FastAPI dashboard runs from the project virtual environment:
+
+```bash
+.venv/bin/python -m uvicorn geovis_lm.dashboard.app:app --reload
+```
+
+Create a run, upload a DEM, run terrain analysis, and generate a report:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/runs
+curl -X POST --data-binary @data/sample/sample_dem.tif \
+  "http://127.0.0.1:8000/api/runs/<run_id>/upload-dem?filename=sample_dem.tif"
+curl -X POST http://127.0.0.1:8000/api/runs/<run_id>/analyze
+curl -X POST http://127.0.0.1:8000/api/runs/<run_id>/report
+curl http://127.0.0.1:8000/api/runs/<run_id>/outputs
+```
+
+For a local demo without uploading bytes manually, create a run and call:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/runs/<run_id>/use-sample-dem
+```

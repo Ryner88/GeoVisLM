@@ -141,3 +141,31 @@ Notes:
 
 - Markdown generation does not require QGIS, ParaView, or GDAL command-line tools.
 - PDF generation requires optional `reportlab`; the CLI exits with a clear message when it is missing.
+
+### `[DONE]` Add Web Dashboard
+
+Implemented:
+
+- Dashboard package under `geovis_lm/dashboard/`
+- FastAPI app at `geovis_lm/dashboard/app.py`
+- Run creation endpoint
+- Raw-byte DEM upload endpoint
+- Sample DEM helper endpoint for local demos
+- Terrain analysis endpoint that writes run-scoped map outputs
+- Report generation endpoint using the terrain report generator
+- Output listing endpoint
+- Static serving for generated files under `/outputs`
+- Run folders under `outputs/runs/<run_id>/`
+- README usage instructions
+
+Verified:
+
+- `python3 -m py_compile geovis_lm/dashboard/app.py`
+- FastAPI and Uvicorn are available in `.venv`
+- Direct dashboard workflow creates a run, attaches the sample DEM, runs terrain analysis, generates a report, and lists outputs.
+- Uvicorn starts successfully at `http://127.0.0.1:8000`.
+
+Notes:
+
+- The dashboard does not require ParaView or QGIS for the basic terrain workflow.
+- `python-multipart` is not installed, so DEM uploads use raw request bytes instead of multipart form uploads.
