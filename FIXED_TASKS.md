@@ -98,3 +98,22 @@ Notes:
 
 - ParaView is not installed through `requirements.txt`; run the script with a local ParaView `pvpython` install.
 - GeoTIFF input support depends on ParaView being built with GDAL raster reader support.
+
+### `[DONE]` Create GeoMiniLM Dataset Format
+
+Implemented:
+
+- Dataset folder under `data/geominilm/`
+- JSONL schema and authoring rules in `data/geominilm/README.md`
+- Starter workflow dataset in `data/geominilm/starter_workflows.jsonl`
+- GIS terrain analysis examples
+- QGIS styling and export examples
+- ParaView rendering and GUI refinement examples
+- Reporting and dataset-authoring examples
+- README link to the GeoMiniLM dataset folder
+
+Verified:
+
+- Starter dataset has 12 JSONL examples.
+- Every example includes `instruction`, `inputs`, `expected_workflow`, and `explanation`.
+- Every workflow step includes `step`, `action`, `tool`, and `output`.

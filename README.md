@@ -65,3 +65,12 @@ Expected outputs are written under `outputs/renders/`:
 Current limitation: ParaView and `pvpython` are not installed by the project
 requirements. The script must be run in an environment where ParaView includes
 GDAL raster reader support for GeoTIFF DEM inputs.
+
+## GeoMiniLM Dataset
+
+Starter instruction data for the planned GeoMiniLM workflow model lives in
+`data/geominilm/`.
+
+- `data/geominilm/README.md` documents the JSONL schema and authoring rules.
+- `data/geominilm/starter_workflows.jsonl` includes seed GIS, QGIS, ParaView,
+  and reporting workflow examples.
