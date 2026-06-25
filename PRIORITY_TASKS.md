@@ -9,82 +9,7 @@ Status labels:
 
 ## Priority Queue
 
-### 1. `[TODO]` Add Report Generator
-
-Goal: generate Markdown and PDF reports from completed GIS and visualization runs so GeoVisLM can produce a presentable deliverable from analysis outputs.
-
-Build:
-
-* Add report package under `geovis_lm/reports/`.
-* Add a report generator module, for example:
-
-  * `geovis_lm/reports/terrain_report.py`
-* Add a CLI entry point, for example:
-
-  * `scripts/generate_report.py`
-* Generate Markdown reports from:
-
-  * DEM input path
-  * slope raster path
-  * hillshade raster path
-  * terrain risk raster path
-  * optional QGIS export image
-  * optional ParaView render image
-  * optional ParaView state file
-* Generate PDF reports when PDF dependencies are available.
-* Keep Markdown generation independent from QGIS and ParaView.
-* Create `outputs/reports/` automatically when needed.
-* Include report sections:
-
-  * Title
-  * Input data
-  * Generated outputs
-  * Terrain analysis summary
-  * Visualization outputs
-  * Reproducibility commands
-  * Limitations and next steps
-* Update `README.md` with report generation usage.
-* Add a GeoMiniLM starter example for report generation if useful.
-
-Suggested CLI:
-
-```bash
-python scripts/generate_report.py \
-  --dem data/sample/sample_dem.tif \
-  --maps-dir outputs/maps \
-  --renders-dir outputs/renders \
-  --output-md outputs/reports/terrain_analysis.md \
-  --output-pdf outputs/reports/terrain_analysis.pdf
-```
-
-Acceptance criteria:
-
-* Markdown report can be generated from the sample terrain workflow outputs.
-* PDF report can be generated when PDF dependencies are installed, or the CLI exits with a clear message explaining the missing dependency.
-* Report includes references to slope, hillshade, terrain risk, and optional visualization outputs.
-* CLI `--help` works.
-* Markdown generation works without ParaView, QGIS, or GDAL command-line tools.
-* README documents usage.
-* Completed work is moved from `PRIORITY_TASKS.md` to `FIXED_TASKS.md`.
-
-Validation:
-
-```bash
-python3 -m py_compile geovis_lm/reports/terrain_report.py
-python3 scripts/generate_report.py --help
-
-python3 scripts/generate_report.py \
-  --dem data/sample/sample_dem.tif \
-  --maps-dir outputs/maps \
-  --renders-dir outputs/renders \
-  --output-md outputs/reports/terrain_analysis.md
-```
-
-Why priority: reports make existing terrain analysis outputs presentable and close the MVP loop from data processing to deliverable.
-
----
-
-### 2. `[TODO]` Add Web Dashboard
+### 1. `[TODO]` Add Web Dashboard
 
 Goal: build a FastAPI dashboard for uploading DEM files, running terrain analysis jobs, and viewing generated outputs.
 
@@ -140,7 +65,7 @@ Why priority: a dashboard turns the CLI pipeline into a usable workflow and crea
 
 ---
 
-### 3. `[TODO]` Add Vector Layer Support
+### 2. `[TODO]` Add Vector Layer Support
 
 Goal: support GeoJSON and Shapefile overlays such as rivers, roads, buildings, and administrative boundaries.
 
@@ -194,7 +119,7 @@ Why priority: vector overlays unlock realistic GIS analysis beyond single-raster
 
 ---
 
-### 4. `[TODO]` Add QGIS Processing Integration
+### 3. `[TODO]` Add QGIS Processing Integration
 
 Goal: use PyQGIS or QGIS Processing algorithms for slope, hillshade, buffers, clipping, and map rendering.
 
@@ -244,7 +169,7 @@ Why priority: QGIS integration improves analytical credibility and prepares the 
 
 ---
 
-### 5. `[TODO]` Add PostGIS Storage
+### 4. `[TODO]` Add PostGIS Storage
 
 Goal: store uploaded layers, metadata, runs, and outputs in PostgreSQL/PostGIS for persistent dashboard workflows.
 

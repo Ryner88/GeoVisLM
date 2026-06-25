@@ -117,3 +117,27 @@ Verified:
 - Starter dataset has 12 JSONL examples.
 - Every example includes `instruction`, `inputs`, `expected_workflow`, and `explanation`.
 - Every workflow step includes `step`, `action`, `tool`, and `output`.
+
+### `[DONE]` Add Report Generator
+
+Implemented:
+
+- Report package under `geovis_lm/reports/`
+- Terrain report generator at `geovis_lm/reports/terrain_report.py`
+- CLI entry point at `scripts/generate_report.py`
+- Markdown reports with input data, generated outputs, terrain summary, visualization outputs, reproducibility commands, limitations, and next steps
+- Optional PDF report generation through `reportlab`
+- Automatic creation of `outputs/reports/`
+- README usage instructions
+
+Verified:
+
+- `python3 -m py_compile geovis_lm/reports/terrain_report.py`
+- `python3 scripts/generate_report.py --help`
+- Markdown report generation from sample terrain outputs
+- PDF report request exits with a clear missing-`reportlab` message in this environment
+
+Notes:
+
+- Markdown generation does not require QGIS, ParaView, or GDAL command-line tools.
+- PDF generation requires optional `reportlab`; the CLI exits with a clear message when it is missing.

@@ -74,3 +74,27 @@ Starter instruction data for the planned GeoMiniLM workflow model lives in
 - `data/geominilm/README.md` documents the JSONL schema and authoring rules.
 - `data/geominilm/starter_workflows.jsonl` includes seed GIS, QGIS, ParaView,
   and reporting workflow examples.
+
+## Report Generation
+
+GeoVisLM can generate a Markdown terrain analysis report from completed terrain
+workflow outputs:
+
+```bash
+python scripts/generate_report.py \
+  --dem data/sample/sample_dem.tif \
+  --maps-dir outputs/maps \
+  --renders-dir outputs/renders \
+  --output-md outputs/reports/terrain_analysis.md
+```
+
+PDF export is optional and requires `reportlab` in the active Python
+environment:
+
+```bash
+python scripts/generate_report.py \
+  --dem data/sample/sample_dem.tif \
+  --maps-dir outputs/maps \
+  --output-md outputs/reports/terrain_analysis.md \
+  --output-pdf outputs/reports/terrain_analysis.pdf
+```
