@@ -347,3 +347,127 @@ gdalinfo --version
 ogrinfo --version
 gdalinfo data/sample/sample_dem.tif
 ```
+
+## Dashboard and Workflow Enhancements
+
+### `[TODO]` Add Batch Upload to New Analysis Page
+
+Goal: allow users to upload and process multiple geospatial files in one analysis workflow instead of submitting files one by one.
+
+Build:
+
+- Multi-file upload field on the New Analysis page
+- Supported file validation for GeoTIFF, GeoJSON, Shapefile bundles, CSV, and future VTK/ParaView inputs
+- Batch queue for multiple files
+- Per-file processing status
+- Error handling for failed files without stopping the full batch
+- Output grouping by analysis run
+
+Acceptance criteria:
+
+- User can select and upload multiple geospatial files at once.
+- Each file shows upload and processing status.
+- Successful files produce outputs under the correct project/analysis run.
+- Failed files show readable error messages.
+- Batch results are grouped together in the dashboard.
+
+Dependencies:
+
+- Web dashboard
+- New Analysis page
+- Analysis run storage model
+
+Why future: this requires the dashboard and upload workflow to exist first.
+
+---
+
+### `[TODO]` Create Project Timeline View
+
+Goal: create a timeline view on the project dashboard that maps the status and expected completion dates for ongoing geospatial analysis tasks.
+
+Build:
+
+- Timeline page or dashboard component
+- Task status tracking
+- Expected completion dates
+- Analysis run milestones
+- Visual grouping by project
+- Filters for open, in-progress, blocked, completed, and overdue tasks
+
+Acceptance criteria:
+
+- User can view all ongoing geospatial analysis tasks in timeline order.
+- Each task displays status, due date, project, and current stage.
+- Timeline clearly shows blocked or overdue work.
+- Dashboard links each timeline item back to the related analysis project.
+
+Dependencies:
+
+- Project dashboard
+- Task/project metadata model
+
+Why future: timeline tracking should come after projects and analysis runs are stored in the app.
+
+---
+
+### `[TODO]` Add Project Sharing and Report Comments
+
+Goal: allow users to invite colleagues to view specific analysis projects and leave comments on Markdown reports.
+
+Build:
+
+- Project-level sharing permissions
+- Invite by email
+- Read-only collaborator access
+- Markdown report comment threads
+- Comment author, timestamp, and resolved status
+- Activity history for shared projects
+
+Acceptance criteria:
+
+- User can invite a colleague to a specific analysis project.
+- Invited collaborator can view only shared projects.
+- Collaborator can leave comments on Markdown reports.
+- Comments are saved with author and timestamp.
+- Project owner can resolve or delete comments.
+
+Dependencies:
+
+- Authentication
+- User accounts
+- Project permissions
+- Markdown report generator
+
+Why future: this is a collaboration feature and should wait until core analysis/reporting works.
+
+---
+
+### `[TODO]` Create GIS and ParaView Templates Library
+
+Goal: allow users to save reusable combinations of GIS steps and ParaView visualization settings and apply them to new datasets.
+
+Build:
+
+- Template creation form
+- Saved GIS processing step sequence
+- Saved ParaView camera, coloring, and render settings
+- Template categories
+- Apply-template workflow for new datasets
+- Import/export template JSON
+
+Acceptance criteria:
+
+- User can save a named workflow template.
+- Template can include GIS steps and ParaView settings.
+- User can apply a saved template to a new dataset.
+- Template output is reproducible across compatible datasets.
+- Templates are stored in a structured JSON format.
+
+Dependencies:
+
+- GIS workflow format
+- ParaView script format
+- Analysis run system
+- Dashboard
+
+Why future: templates become valuable after at least one or two workflows are implemented.
