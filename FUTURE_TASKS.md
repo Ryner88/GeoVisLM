@@ -11,18 +11,6 @@ Status labels:
 
 ## Future Queue
 
-### `[TODO]` Add Web Dashboard
-
-Build a FastAPI dashboard for uploading DEM files, running analysis jobs, and viewing outputs.
-
-### `[TODO]` Add Report Generator
-
-Generate Markdown and PDF reports from completed GIS/visualization runs.
-
-### `[TODO]` Add Vector Layer Support
-
-Support GeoJSON/Shapefile overlays such as rivers, roads, buildings, and administrative boundaries.
-
 ### `[TODO]` Add Flood Risk Workflow
 
 Combine DEM, slope, river buffers, and building footprints into a flood-risk analysis.
@@ -30,14 +18,6 @@ Combine DEM, slope, river buffers, and building footprints into a flood-risk ana
 ### `[TODO]` Add Wildfire Risk Workflow
 
 Combine slope, vegetation, wind/sensor data, and proximity layers into a wildfire-risk analysis.
-
-### `[TODO]` Add QGIS Processing Integration
-
-Use PyQGIS or QGIS Processing algorithms for slope, hillshade, buffers, clipping, and map rendering.
-
-### `[TODO]` Add PostGIS Storage
-
-Store uploaded layers, metadata, runs, and outputs in PostgreSQL/PostGIS.
 
 ### `[TODO]` Train First GeoMiniLM Prototype
 
