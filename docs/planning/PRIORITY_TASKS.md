@@ -33,6 +33,8 @@ Each task separates requirements from implementation notes. Requirements describ
 
 Goal: replace ad-hoc run folders and JSON metadata with durable project/run state.
 
+Planning/spec status: complete in `docs/operations/RUN_MODEL.md`; implementation remains TODO.
+
 Requirements:
 
 - Persist projects, analysis runs, file references, status history, retries, and failures.
@@ -59,6 +61,8 @@ Why priority: the dashboard cannot be operational without reliable, queryable pr
 ### 2. `[TODO]` Implement Reliable File Ingestion
 
 Goal: make upload handling safe and reliable for real geospatial workloads.
+
+Planning/spec status: complete in `docs/operations/FILE_INGESTION_POLICY.md`; implementation remains TODO.
 
 Requirements:
 
@@ -174,6 +178,8 @@ Why priority: GIS and visualization workflows can run longer than a normal web r
 
 Goal: protect projects, uploads, outputs, and paths before the app is exposed beyond local development.
 
+Planning/spec status: complete in `docs/operations/SECURITY_AND_PERMISSIONS.md`; implementation remains TODO.
+
 Requirements:
 
 - Add authentication.
@@ -203,6 +209,8 @@ Why priority: file upload and output browsing are high-risk surfaces if the app 
 
 Goal: provide a repeatable production deployment configuration with persistent storage, environment configuration, and observability hooks.
 
+Planning/spec status: complete in `docs/operations/DEPLOYMENT_PATH.md`; implementation remains TODO.
+
 Requirements:
 
 - Define a reproducible app runtime.
@@ -231,6 +239,8 @@ Why priority: operational use needs repeatable deployment, persistent storage, a
 ### 8. `[TODO]` Expand Operational Test Coverage
 
 Goal: add tests that cover operational paths across GIS workflows, reports, storage, API behavior, uploads, security, and failures.
+
+Planning/spec status: complete in `docs/operations/TEST_COVERAGE_PLAN.md`; implementation remains TODO.
 
 Requirements:
 

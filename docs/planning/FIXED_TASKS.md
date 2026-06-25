@@ -243,3 +243,24 @@ Notes:
 
 - The project still works in file-only mode when PostGIS is not configured.
 - A real PostGIS connection requires installing the optional `psycopg` package.
+
+### `[DONE]` Add Operational Planning Specs
+
+Implemented:
+
+- Project/run model specification at `docs/operations/RUN_MODEL.md`
+- File ingestion policy at `docs/operations/FILE_INGESTION_POLICY.md`
+- Security and permissions policy at `docs/operations/SECURITY_AND_PERMISSIONS.md`
+- Deployment path at `docs/operations/DEPLOYMENT_PATH.md`
+- Operational test coverage plan at `docs/operations/TEST_COVERAGE_PLAN.md`
+- Documentation index links in `docs/README.md`
+
+Verified:
+
+- Operational specs define the planning portion for project/run model, file ingestion, security, deployment, and testing.
+- `docs/planning/PRIORITY_TASKS.md` now marks those specs complete while leaving implementation tasks as `[TODO]`.
+
+Notes:
+
+- This completed item covers documentation/specification only.
+- Operational implementation remains pending in the priority queue.
