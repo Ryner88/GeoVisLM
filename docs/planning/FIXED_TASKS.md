@@ -1,6 +1,6 @@
 # GeoVisLM Fixed Tasks
 
-Completed tasks should be moved here from `PRIORITY_TASKS.md`.
+Completed tasks should be moved here from `docs/planning/PRIORITY_TASKS.md`.
 
 Status labels:
 
@@ -224,7 +224,7 @@ Implemented:
 
 - Optional storage package under `geovis_lm/storage/`
 - Database helper module at `geovis_lm/storage/db.py`
-- PostGIS schema documentation at `docs/POSTGIS_SCHEMA.md`
+- PostGIS schema documentation at `docs/storage/POSTGIS_SCHEMA.md`
 - Schema SQL for runs, uploaded layers, outputs, reports, and visualizations
 - Configurable `GEOVIS_DATABASE_URL`
 - `.env.example` database settings

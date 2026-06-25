@@ -33,9 +33,9 @@ The first MVP focuses on terrain analysis:
 
 ## Project Tracking
 
-- [Priority Tasks](PRIORITY_TASKS.md)
-- [Future Tasks](FUTURE_TASKS.md)
-- [Fixed Tasks](FIXED_TASKS.md)
+- [Priority Tasks](docs/planning/PRIORITY_TASKS.md)
+- [Future Tasks](docs/planning/FUTURE_TASKS.md)
+- [Fixed Tasks](docs/planning/FIXED_TASKS.md)
 
 ## UML Diagrams
 
@@ -171,4 +171,4 @@ python3 scripts/init_postgis.py --dry-run
 python3 scripts/init_postgis.py --print-sql
 ```
 
-See `docs/POSTGIS_SCHEMA.md` for the table layout and setup notes.
+See `docs/storage/POSTGIS_SCHEMA.md` for the table layout and setup notes.

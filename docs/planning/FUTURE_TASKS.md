@@ -1,13 +1,13 @@
 # GeoVisLM Future Tasks
 
-These tasks are not current priority work. Move items into `PRIORITY_TASKS.md` when they become active.
+These tasks are not current priority work. Move items into `docs/planning/PRIORITY_TASKS.md` when they become active.
 
 Status labels:
 
 * `[TODO]` not started
 * `[IN-PROGRESS]` actively being worked
 * `[BLOCKED]` cannot move without another fix or decision
-* `[DONE]` completed and ready to move into `FIXED_TASKS.md`
+* `[DONE]` completed and ready to move into `docs/planning/FIXED_TASKS.md`
 
 ## Future Queue
 
