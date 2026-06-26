@@ -1,0 +1,40 @@
+services:
+  dashboard:
+    build: .
+    env_file:
+      - .env
+    environment:
+      GEOVIS_OUTPUT_ROOT: /app/outputs
+      GEOVIS_REQUIRE_AUTH: "true"
+      GEOVIS_AUTH_TOKEN: ${GEOVIS_AUTH_TOKEN:-change-me-local-token}
+      GEOVIS_DATABASE_URL: postgresql://geovis:geovis@db:5432/geovis_lm
+    ports:
+      - "8000:8000"
+    volumes:
+      - geovis_outputs:/app/outputs
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_DB: geovis_lm
+      POSTGRES_USER: geovis
+      POSTGRES_PASSWORD: geovis
+    volumes:
+      - geovis_postgis:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U geovis -d geovis_lm"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  geovis_outputs:
+  geovis_postgis:

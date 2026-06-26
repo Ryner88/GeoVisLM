@@ -1,198 +1,436 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import base64
+import json
+import secrets
+from html import escape
+from urllib.parse import parse_qs
 from pathlib import Path
-from shutil import copyfileobj
-from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
-from geovis_lm.gis.terrain import (
-    calculate_hillshade,
-    calculate_slope_degrees,
-    classify_slope_risk,
-    load_dem,
-    save_raster,
+from geovis_lm.dashboard.operations import (
+    DashboardConfig,
+    DASHBOARD_SESSION_COOKIE,
+    assert_project_access,
+    copy_sample_dem_to_run,
+    create_dashboard_session,
+    create_job_record,
+    create_project,
+    create_run_record,
+    create_run_folders,
+    ensure_storage,
+    first_valid_dem,
+    get_project,
+    get_run,
+    ingest_base64_files,
+    get_job,
+    list_jobs,
+    list_projects,
+    list_runs,
+    list_visible_runs,
+    principal_from_request,
+    relative_output_url,
+    run_dir,
+    run_metadata_path,
+    update_run,
+    valid_vector_inputs,
+    write_json,
+)
+from geovis_lm.dashboard.analysis_adapter import (
+    AnalysisExecutionError,
+    execute_dem_analysis,
 )
 from geovis_lm.reports.terrain_report import TerrainReportInputs, write_markdown_report
 
 
-OUTPUT_ROOT = Path("outputs")
-RUNS_ROOT = OUTPUT_ROOT / "runs"
+CONFIG = DashboardConfig.from_env()
+ensure_storage(CONFIG)
 
-app = FastAPI(title="GeoVisLM Dashboard", version="0.1.0")
-
-OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
-RUNS_ROOT.mkdir(parents=True, exist_ok=True)
-app.mount("/outputs", StaticFiles(directory=str(OUTPUT_ROOT)), name="outputs")
+app = FastAPI(title="GeoVisLM Dashboard", version="0.2.0")
+app.mount("/outputs", StaticFiles(directory=str(CONFIG.output_root)), name="outputs")
 
 
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    if (
+        exc.status_code == 401
+        and not request.url.path.startswith(("/api", "/healthz", "/readyz", "/outputs", "/login"))
+        and request.method in {"GET", "POST"}
+    ):
+        return RedirectResponse(f"/login?next={request.url.path}", status_code=303)
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}, headers=exc.headers)
 
 
-def run_dir(run_id: str) -> Path:
-    safe_run_id = Path(run_id).name
-    if safe_run_id != run_id:
-        raise HTTPException(status_code=400, detail="Invalid run_id")
-    return RUNS_ROOT / safe_run_id
+class ProjectCreate(BaseModel):
+    name: str = Field(default="Untitled Project", min_length=1, max_length=120)
+    description: str = ""
 
 
-def run_metadata_path(run_id: str) -> Path:
-    return run_dir(run_id) / "metadata.json"
+class RunCreate(BaseModel):
+    name: str | None = None
+    workflow_type: str = "terrain"
+    parameters: dict = Field(default_factory=dict)
 
 
-def write_json(path: Path, data: dict) -> None:
-    import json
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
-
-
-def read_json(path: Path) -> dict:
-    import json
-
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Run not found")
-    return json.loads(path.read_text(encoding="utf-8"))
+class UploadFilePayload(BaseModel):
+    filename: str
+    content_b64: str
+    content_type: str | None = None
 
 
-def update_run(run_id: str, **updates) -> dict:
-    path = run_metadata_path(run_id)
-    metadata = read_json(path)
-    metadata.update(updates)
-    metadata["updated_at"] = utc_now()
-    write_json(path, metadata)
-    return metadata
+class BatchUploadPayload(BaseModel):
+    files: list[UploadFilePayload]
 
 
-def create_run_folders(base_dir: Path) -> None:
-    for child in ("inputs", "maps", "renders", "reports"):
-        (base_dir / child).mkdir(parents=True, exist_ok=True)
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request, next: str = "/") -> str:
+    error = request.query_params.get("error")
+    error_markup = "<p style='color:#b91c1c'>Invalid token</p>" if error else ""
+    return f"""
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>GeoVisLM Login</title>
+    <style>
+      body {{ font-family: system-ui, sans-serif; margin: 2rem; max-width: 32rem; }}
+      label, input, button {{ display: block; font: inherit; width: 100%; box-sizing: border-box; margin: .5rem 0; }}
+      input, button {{ padding: .5rem; }}
+    </style>
+  </head>
+  <body>
+    <h1>GeoVisLM Dashboard</h1>
+    {error_markup}
+    <form method="post" action="/login">
+      <input type="hidden" name="next" value="{escape(next)}">
+      <label>Access token<input name="token" type="password" required autofocus></label>
+      <label>User<input name="user_id" value="dashboard-user" required></label>
+      <label>Role<input name="role" value="owner" required></label>
+      <button>Sign in</button>
+    </form>
+  </body>
+</html>
+"""
 
 
-def relative_output_url(path: Path) -> str:
-    return "/" + path.as_posix()
+@app.post("/login")
+async def login(request: Request) -> RedirectResponse:
+    form = parse_qs((await request.body()).decode("utf-8"))
+    token = form.get("token", [""])[0]
+    next_url = form.get("next", ["/"])[0] or "/"
+    if not next_url.startswith("/") or next_url.startswith("//"):
+        next_url = "/"
+    if not CONFIG.auth_token or not secrets.compare_digest(token, CONFIG.auth_token):
+        return RedirectResponse(f"/login?error=1&next={next_url}", status_code=303)
+    session = create_dashboard_session(
+        CONFIG,
+        form.get("user_id", ["dashboard-user"])[0] or "dashboard-user",
+        form.get("role", ["owner"])[0] or "owner",
+    )
+    response = RedirectResponse(next_url, status_code=303)
+    response.set_cookie(DASHBOARD_SESSION_COOKIE, session, httponly=True, samesite="lax")
+    return response
+
+
+@app.post("/logout")
+def logout() -> RedirectResponse:
+    response = RedirectResponse("/login", status_code=303)
+    response.delete_cookie(DASHBOARD_SESSION_COOKIE)
+    return response
+
+
+def project_for_run(run: dict) -> dict:
+    return get_project(CONFIG, run["project_id"])
+
+
+def run_analysis_workflow(run_id: str) -> dict:
+    metadata = get_run(CONFIG, run_id)
+    dem_path = first_valid_dem(metadata)
+    if not dem_path or not dem_path.exists():
+        return update_run(
+            CONFIG,
+            run_id,
+            status="failed",
+            status_message="No valid DEM input found",
+            error_code="missing_dem",
+            error_message="Upload a valid DEM before analysis",
+            retryable=True,
+        )
+
+    update_run(CONFIG, run_id, status="running", status_message="Terrain analysis started")
+
+    try:
+        result = execute_dem_analysis(
+            dem_path,
+            maps_dir=run_dir(CONFIG, run_id) / "maps",
+            reports_dir=run_dir(CONFIG, run_id) / "reports",
+            vectors_dir=run_dir(CONFIG, run_id) / "vectors",
+            renders_dir=run_dir(CONFIG, run_id) / "renders",
+            vector_paths=valid_vector_inputs(metadata),
+            parameters=metadata.get("parameters", {}),
+        )
+    except AnalysisExecutionError as exc:
+        return update_run(
+            CONFIG,
+            run_id,
+            status="failed",
+            status_message="Terrain analysis failed",
+            error_code=exc.error_code,
+            error_message=exc.error_message,
+            error_detail=json.dumps(exc.as_detail(), sort_keys=True),
+            retryable=exc.retryable,
+        )
+    except Exception as exc:
+        return update_run(
+            CONFIG,
+            run_id,
+            status="failed",
+            status_message="Terrain analysis failed",
+            error_code="dem_analysis_failed",
+            error_message=str(exc),
+            error_detail=repr(exc),
+            retryable=True,
+        )
+
+    return update_run(
+        CONFIG,
+        run_id,
+        status="completed",
+        status_message="Terrain analysis completed",
+        outputs=result.outputs,
+        crs=result.metadata.get("crs"),
+        execution_adapter=result.adapter,
+        execution_metadata=result.metadata,
+        retryable=False,
+        error_code=None,
+        error_message=None,
+        error_detail=None,
+    )
+
+
+@app.get("/healthz")
+def healthz() -> dict:
+    return {"status": "ok"}
+
+
+@app.get("/readyz")
+def readyz() -> dict:
+    storage_ready = CONFIG.output_root.exists() and CONFIG.output_root.is_dir()
+    return {
+        "status": "ready" if storage_ready else "not_ready",
+        "storage": storage_ready,
+        "database_mode": bool(CONFIG.database_url),
+        "auth_required": CONFIG.require_auth,
+        "auth_configured": bool(CONFIG.auth_token) if CONFIG.require_auth else True,
+    }
 
 
 @app.get("/", response_class=HTMLResponse)
-def index() -> str:
-    return """
+def index(request: Request) -> str:
+    principal = principal_from_request(request, CONFIG)
+    projects = list_projects(CONFIG, principal)
+    projects_by_id = {project["id"]: project for project in projects}
+    runs = list_visible_runs(CONFIG, principal)
+    project_items = "\n".join(
+        f"<li><a href='/projects/{project['id']}'>{project['name']}</a> <code>{project['status']}</code></li>"
+        for project in projects
+    ) or "<li>No projects yet</li>"
+    run_items = "\n".join(
+        f"<li><a href='/runs/{run['run_id']}'>{escape(run['name'])}</a> "
+        f"<code>{escape(run['status'])}</code> "
+        f"<a href='/projects/{run['project_id']}'>{escape(projects_by_id[run['project_id']]['name'])}</a></li>"
+        for run in runs[:20]
+    ) or "<li>No runs yet</li>"
+    return f"""
 <!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8">
     <title>GeoVisLM Dashboard</title>
     <style>
-      body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 900px; }
-      code, pre { background: #f4f4f4; padding: 0.2rem 0.35rem; }
-      pre { padding: 1rem; overflow-x: auto; }
+      body {{ font-family: system-ui, sans-serif; margin: 2rem; max-width: 1100px; }}
+      main {{ display: grid; gap: 1.5rem; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }}
+      form, section {{ border: 1px solid #ddd; border-radius: 8px; padding: 1rem; }}
+      input, textarea, button {{ font: inherit; margin: .25rem 0; width: 100%; box-sizing: border-box; }}
+      code {{ background: #f4f4f4; padding: 0.1rem 0.3rem; }}
     </style>
   </head>
   <body>
     <h1>GeoVisLM Dashboard</h1>
-    <p>Use the JSON API to create terrain analysis runs, upload DEM bytes, generate maps, and write reports.</p>
-    <pre>curl -X POST http://127.0.0.1:8000/api/runs</pre>
-    <pre>curl -X POST --data-binary @data/sample/sample_dem.tif \
-"http://127.0.0.1:8000/api/runs/&lt;run_id&gt;/upload-dem?filename=sample_dem.tif"</pre>
+    <main>
+      <form method="post" action="/dashboard/projects">
+        <h2>New Project</h2>
+        <input name="name" placeholder="Project name" required>
+        <textarea name="description" placeholder="Description"></textarea>
+        <button>Create project</button>
+      </form>
+      <section>
+        <h2>Projects</h2>
+        <ul>{project_items}</ul>
+      </section>
+      <section>
+        <h2>Recent Runs</h2>
+        <ul>{run_items}</ul>
+      </section>
+    </main>
   </body>
 </html>
 """
 
 
-@app.post("/api/runs")
-def create_run() -> dict:
-    run_id = uuid4().hex
-    base_dir = run_dir(run_id)
-    create_run_folders(base_dir)
-
-    metadata = {
-        "run_id": run_id,
-        "status": "created",
-        "created_at": utc_now(),
-        "updated_at": utc_now(),
-        "paths": {
-            "run_dir": str(base_dir),
-            "inputs": str(base_dir / "inputs"),
-            "maps": str(base_dir / "maps"),
-            "renders": str(base_dir / "renders"),
-            "reports": str(base_dir / "reports"),
-        },
-        "outputs": {},
-    }
-    write_json(run_metadata_path(run_id), metadata)
-    return metadata
+@app.post("/api/projects")
+def create_project_api(payload: ProjectCreate, request: Request) -> dict:
+    principal = principal_from_request(request, CONFIG)
+    return create_project(CONFIG, payload.name, principal["user_id"], payload.description)
 
 
-@app.post("/api/runs/{run_id}/upload-dem")
-async def upload_dem(
-    run_id: str,
-    request: Request,
-    filename: str = Query(default="dem.tif", description="Filename to use for uploaded DEM bytes."),
-) -> dict:
-    base_dir = run_dir(run_id)
-    if not base_dir.exists():
-        raise HTTPException(status_code=404, detail="Run not found")
+@app.get("/api/projects")
+def list_projects_api(request: Request) -> dict:
+    principal = principal_from_request(request, CONFIG)
+    return {"projects": list_projects(CONFIG, principal)}
 
-    safe_filename = Path(filename).name
-    if not safe_filename:
-        raise HTTPException(status_code=400, detail="filename is required")
 
-    dem_path = base_dir / "inputs" / safe_filename
-    with dem_path.open("wb") as output:
-        async for chunk in request.stream():
-            output.write(chunk)
+@app.get("/api/projects/{project_id}")
+def get_project_api(project_id: str, request: Request) -> dict:
+    principal = principal_from_request(request, CONFIG)
+    project = get_project(CONFIG, project_id)
+    assert_project_access(project, principal, "view")
+    return project
 
-    return update_run(
-        run_id,
-        status="uploaded",
-        dem_path=str(dem_path),
+
+@app.post("/api/projects/{project_id}/runs")
+def create_project_run(project_id: str, payload: RunCreate, request: Request) -> dict:
+    principal = principal_from_request(request, CONFIG)
+    project = get_project(CONFIG, project_id)
+    assert_project_access(project, principal, "create_run")
+    return create_run_record(
+        CONFIG,
+        project,
+        principal["user_id"],
+        workflow_type=payload.workflow_type,
+        name=payload.name,
+        parameters=payload.parameters,
     )
 
 
-@app.post("/api/runs/{run_id}/analyze")
-def analyze_run(run_id: str) -> dict:
-    metadata = read_json(run_metadata_path(run_id))
-    dem_path = Path(metadata.get("dem_path", ""))
-    if not dem_path.exists():
-        raise HTTPException(status_code=400, detail="Upload a DEM before analysis")
+@app.get("/api/projects/{project_id}/runs")
+def list_project_runs(project_id: str, request: Request) -> dict:
+    principal = principal_from_request(request, CONFIG)
+    project = get_project(CONFIG, project_id)
+    assert_project_access(project, principal, "view")
+    return {"project_id": project_id, "runs": list_runs(CONFIG, project_id)}
 
-    maps_dir = run_dir(run_id) / "maps"
-    update_run(run_id, status="running")
 
-    try:
-        dem, profile, transform, crs = load_dem(dem_path)
-        slope = calculate_slope_degrees(dem, transform)
-        hillshade = calculate_hillshade(dem, transform)
-        risk = classify_slope_risk(slope)
+@app.post("/api/projects/{project_id}/runs/{run_id}/files")
+def upload_project_run_files(project_id: str, run_id: str, payload: BatchUploadPayload, request: Request) -> dict:
+    principal = principal_from_request(request, CONFIG)
+    project = get_project(CONFIG, project_id)
+    assert_project_access(project, principal, "upload")
+    run = get_run(CONFIG, run_id)
+    if run["project_id"] != project_id:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return ingest_base64_files(CONFIG, run, [item.model_dump() for item in payload.files])
 
-        slope_path = save_raster(
-            maps_dir / "slope_degrees.tif", slope, profile, dtype="float32", nodata=-9999
-        )
-        hillshade_path = save_raster(
-            maps_dir / "hillshade.tif", hillshade, profile, dtype="float32", nodata=-9999
-        )
-        risk_path = save_raster(
-            maps_dir / "terrain_risk.tif", risk, profile, dtype="uint8", nodata=0
-        )
-    except Exception as exc:
-        update_run(run_id, status="failed", error=str(exc))
-        raise HTTPException(status_code=500, detail=f"Terrain analysis failed: {exc}") from exc
 
-    outputs = {
-        "slope": str(slope_path),
-        "hillshade": str(hillshade_path),
-        "terrain_risk": str(risk_path),
+@app.post("/api/runs/{run_id}/queue")
+def queue_run(run_id: str, request: Request) -> dict:
+    principal = principal_from_request(request, CONFIG)
+    run = get_run(CONFIG, run_id)
+    project = project_for_run(run)
+    assert_project_access(project, principal, "analyze")
+    queued = update_run(CONFIG, run_id, status="queued", status_message="Analysis queued")
+    job = create_job_record(CONFIG, queued, principal["user_id"])
+    queued["job"] = job
+    return queued
+
+
+@app.get("/api/jobs")
+def list_jobs_api(request: Request, status: str | None = None, run_id: str | None = None) -> dict:
+    principal = principal_from_request(request, CONFIG)
+    if run_id:
+        run = get_run(CONFIG, run_id)
+        project = project_for_run(run)
+        assert_project_access(project, principal, "view")
+        return {"jobs": list_jobs(CONFIG, status=status, run_id=run_id)}
+    visible_project_ids = {project["id"] for project in list_projects(CONFIG, principal)}
+    return {
+        "jobs": [
+            job for job in list_jobs(CONFIG, status=status) if job.get("project_id") in visible_project_ids
+        ]
     }
-    return update_run(run_id, status="completed", outputs=outputs, crs=str(crs))
+
+
+@app.get("/api/jobs/{job_id}")
+def get_job_api(job_id: str, request: Request) -> dict:
+    principal = principal_from_request(request, CONFIG)
+    job = get_job(CONFIG, job_id)
+    project = get_project(CONFIG, job["project_id"])
+    assert_project_access(project, principal, "view")
+    return job
+
+
+@app.post("/api/runs/{run_id}/analyze")
+def analyze_run(run_id: str, request: Request) -> dict:
+    principal = principal_from_request(request, CONFIG)
+    run = get_run(CONFIG, run_id)
+    project = project_for_run(run)
+    assert_project_access(project, principal, "analyze")
+    return run_analysis_workflow(run_id)
+
+
+@app.post("/api/runs/{run_id}/retry")
+def retry_run(run_id: str, request: Request) -> dict:
+    principal = principal_from_request(request, CONFIG)
+    source_run = get_run(CONFIG, run_id)
+    project = project_for_run(source_run)
+    assert_project_access(project, principal, "retry")
+    if source_run.get("status") != "failed" or not source_run.get("retryable"):
+        raise HTTPException(status_code=400, detail="Run is not retryable")
+    retry = create_run_record(
+        CONFIG,
+        project,
+        principal["user_id"],
+        workflow_type=source_run.get("workflow_type", "terrain"),
+        name=f"Retry of {source_run.get('name', run_id)}",
+        parameters=source_run.get("parameters", {}),
+        retry_of_run_id=run_id,
+        attempt_number=int(source_run.get("attempt_number", 1)) + 1,
+    )
+    retry["inputs"] = source_run.get("inputs", [])
+    retry = update_run(
+        CONFIG,
+        retry["run_id"],
+        status="retrying",
+        status_message="Retry created from failed run",
+        inputs=retry["inputs"],
+    )
+    retry = update_run(CONFIG, retry["run_id"], status="queued", status_message="Retry queued")
+    retry["job"] = create_job_record(CONFIG, retry, principal["user_id"])
+    return retry
+
+
+@app.post("/api/runs/{run_id}/cancel")
+def cancel_run(run_id: str, request: Request) -> dict:
+    principal = principal_from_request(request, CONFIG)
+    run = get_run(CONFIG, run_id)
+    project = project_for_run(run)
+    assert_project_access(project, principal, "cancel")
+    if run["status"] not in {"created", "queued", "running"}:
+        raise HTTPException(status_code=400, detail="Only created, queued, or running runs can be canceled")
+    return update_run(CONFIG, run_id, status="canceled", status_message="Run canceled")
 
 
 @app.post("/api/runs/{run_id}/report")
-def generate_report(run_id: str) -> dict:
-    metadata = read_json(run_metadata_path(run_id))
-    dem_path = Path(metadata.get("dem_path", ""))
+def generate_report(run_id: str, request: Request) -> dict:
+    principal = principal_from_request(request, CONFIG)
+    metadata = get_run(CONFIG, run_id)
+    project = project_for_run(metadata)
+    assert_project_access(project, principal, "report")
+    dem_path = first_valid_dem(metadata)
     outputs = metadata.get("outputs", {})
 
     required = {
@@ -207,10 +445,10 @@ def generate_report(run_id: str) -> dict:
             detail=f"Run analysis before report generation. Missing: {', '.join(missing)}",
         )
 
-    report_path = run_dir(run_id) / "reports" / "terrain_analysis.md"
+    report_path = run_dir(CONFIG, run_id) / "reports" / "terrain_analysis.md"
     write_markdown_report(
         TerrainReportInputs(
-            dem_path=dem_path,
+            dem_path=dem_path or Path(""),
             slope_path=Path(required["slope"]),
             hillshade_path=Path(required["hillshade"]),
             terrain_risk_path=Path(required["terrain_risk"]),
@@ -221,21 +459,37 @@ def generate_report(run_id: str) -> dict:
     )
 
     outputs["report_md"] = str(report_path)
-    metadata = update_run(run_id, status="reported", outputs=outputs)
-    metadata["report_url"] = relative_output_url(report_path)
+    metadata = update_run(CONFIG, run_id, status="reported", status_message="Report generated", outputs=outputs)
+    metadata["report_url"] = relative_output_url(CONFIG, report_path)
     return metadata
 
 
+@app.get("/api/runs")
+def list_all_runs(request: Request, project_id: str | None = None) -> dict:
+    principal = principal_from_request(request, CONFIG)
+    if project_id:
+        project = get_project(CONFIG, project_id)
+        assert_project_access(project, principal, "view")
+        return {"runs": list_runs(CONFIG, project_id)}
+    return {"runs": list_visible_runs(CONFIG, principal)}
+
+
 @app.get("/api/runs/{run_id}")
-def get_run(run_id: str) -> dict:
-    return read_json(run_metadata_path(run_id))
+def get_run_api(run_id: str, request: Request) -> dict:
+    principal = principal_from_request(request, CONFIG)
+    run = get_run(CONFIG, run_id)
+    project = project_for_run(run)
+    assert_project_access(project, principal, "view")
+    return run
 
 
 @app.get("/api/runs/{run_id}/outputs")
-def list_outputs(run_id: str) -> dict:
-    base_dir = run_dir(run_id)
-    if not base_dir.exists():
-        raise HTTPException(status_code=404, detail="Run not found")
+def list_outputs(run_id: str, request: Request) -> dict:
+    principal = principal_from_request(request, CONFIG)
+    run = get_run(CONFIG, run_id)
+    project = project_for_run(run)
+    assert_project_access(project, principal, "view")
+    base_dir = run_dir(CONFIG, run_id)
 
     files = []
     for path in sorted(base_dir.rglob("*")):
@@ -243,27 +497,241 @@ def list_outputs(run_id: str) -> dict:
             files.append(
                 {
                     "path": str(path),
-                    "url": relative_output_url(path),
+                    "url": relative_output_url(CONFIG, path),
                     "bytes": path.stat().st_size,
+                    "role": "output"
+                    if {"maps", "reports", "vectors", "renders"} & set(path.parts)
+                    else "input",
                 }
             )
-    return {"run_id": run_id, "files": files}
+    return {"project_id": run["project_id"], "run_id": run_id, "files": files}
 
 
-def copy_sample_dem_to_run(run_id: str, sample_dem: Path = Path("data/sample/sample_dem.tif")) -> dict:
-    base_dir = run_dir(run_id)
-    if not base_dir.exists():
-        raise HTTPException(status_code=404, detail="Run not found")
-    if not sample_dem.exists():
-        raise HTTPException(status_code=404, detail=f"Sample DEM not found: {sample_dem}")
+@app.get("/projects/{project_id}", response_class=HTMLResponse)
+def project_page(project_id: str, request: Request) -> str:
+    principal = principal_from_request(request, CONFIG)
+    project = get_project(CONFIG, project_id)
+    assert_project_access(project, principal, "view")
+    runs = list_runs(CONFIG, project_id)
+    run_rows = "\n".join(
+        "<tr>"
+        f"<td><a href='/runs/{run['run_id']}'>{escape(run['name'])}</a></td>"
+        f"<td><code>{escape(run['status'])}</code></td>"
+        f"<td>{escape(run.get('created_by_user_id') or '')}</td>"
+        f"<td>{escape(run.get('created_at') or '')}</td>"
+        f"<td>{escape(run.get('updated_at') or '')}</td>"
+        f"<td>{len(run.get('inputs', []))}</td>"
+        f"<td>{len([value for value in run.get('outputs', {}).values() if value])}</td>"
+        "</tr>"
+        for run in runs
+    ) or "<tr><td colspan='7'>No runs yet</td></tr>"
+    return f"""
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>{escape(project['name'])}</title>
+    <style>
+      body {{ font-family: system-ui, sans-serif; margin: 2rem; }}
+      table {{ border-collapse: collapse; width: 100%; }}
+      th, td {{ border-bottom: 1px solid #ddd; padding: .45rem; text-align: left; }}
+      code {{ background: #f4f4f4; padding: .1rem .3rem; }}
+    </style>
+  </head>
+  <body>
+    <h1>{escape(project['name'])}</h1>
+    <p>{escape(project.get('description', ''))}</p>
+    <form method="post" action="/dashboard/projects/{project_id}/runs">
+      <input name="name" placeholder="Run name">
+      <button>New analysis</button>
+    </form>
+    <h2>Runs</h2>
+    <table>
+      <thead><tr><th>Name</th><th>Status</th><th>Owner</th><th>Created</th><th>Updated</th><th>Files</th><th>Outputs</th></tr></thead>
+      <tbody>{run_rows}</tbody>
+    </table>
+  </body>
+</html>
+"""
 
-    dem_path = base_dir / "inputs" / sample_dem.name
-    with sample_dem.open("rb") as source, dem_path.open("wb") as target:
-        copyfileobj(source, target)
 
-    return update_run(run_id, status="uploaded", dem_path=str(dem_path))
+@app.get("/runs/{run_id}", response_class=HTMLResponse)
+def run_page(run_id: str, request: Request) -> str:
+    principal = principal_from_request(request, CONFIG)
+    run = get_run(CONFIG, run_id)
+    project = project_for_run(run)
+    assert_project_access(project, principal, "view")
+    jobs = list_jobs(CONFIG, run_id=run_id)
+    outputs = [
+        f"<li><a href='{relative_output_url(CONFIG, Path(path))}'>{escape(name)}</a> <code>{escape(Path(path).name)}</code></li>"
+        for name, path in run.get("outputs", {}).items()
+        if path
+    ]
+    inputs = [
+        "<tr>"
+        f"<td>{escape(item.get('original_filename') or item.get('stored_filename') or '')}</td>"
+        f"<td><code>{escape(item.get('status') or '')}</code></td>"
+        f"<td>{escape(item.get('file_type') or '')}</td>"
+        f"<td>{item.get('size_bytes') or 0}</td>"
+        f"<td>{escape('; '.join(error.get('error_message', '') for error in item.get('validation_errors', [])))}</td>"
+        "</tr>"
+        for item in run.get("inputs", [])
+    ]
+    job_rows = [
+        "<tr>"
+        f"<td><code>{escape(job.get('status') or '')}</code></td>"
+        f"<td>{escape(job.get('job_type') or '')}</td>"
+        f"<td>{escape(job.get('updated_at') or '')}</td>"
+        f"<td>{escape(job.get('error_message') or '')}</td>"
+        f"<td>{escape(job.get('logs_path') or '')}</td>"
+        "</tr>"
+        for job in jobs
+    ]
+    history = "\n".join(
+        f"<li><code>{escape(item['status'])}</code> {escape(item['at'])} {escape(item.get('message', ''))}</li>"
+        for item in run.get("status_history", [])
+    )
+    actions = []
+    if run.get("status") in {"created", "uploaded", "retrying"}:
+        actions.append(f"<form method='post' action='/dashboard/runs/{run_id}/queue'><button>Queue</button></form>")
+    if run.get("status") in {"created", "queued", "running"}:
+        actions.append(f"<form method='post' action='/dashboard/runs/{run_id}/cancel'><button>Cancel</button></form>")
+    if run.get("status") == "failed" and run.get("retryable"):
+        actions.append(f"<form method='post' action='/dashboard/runs/{run_id}/retry'><button>Retry</button></form>")
+    return f"""
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>{escape(run['name'])}</title>
+    <style>
+      body {{ font-family: system-ui, sans-serif; margin: 2rem; }}
+      table {{ border-collapse: collapse; width: 100%; margin-bottom: 1rem; }}
+      th, td {{ border-bottom: 1px solid #ddd; padding: .45rem; text-align: left; vertical-align: top; }}
+      code {{ background: #f4f4f4; padding: .1rem .3rem; }}
+      form {{ display: inline-block; margin-right: .5rem; }}
+    </style>
+  </head>
+  <body>
+    <h1>{escape(run['name'])}</h1>
+    <p>Status: <code>{escape(run['status'])}</code></p>
+    <p>Owner: {escape(run.get('created_by_user_id') or '')}</p>
+    <p>Created: {escape(run.get('created_at') or '')}</p>
+    <p>Updated: {escape(run.get('updated_at') or '')}</p>
+    <p>Error: {escape(run.get('error_message') or '')}</p>
+    <div>{''.join(actions)}</div>
+    <h2>Inputs</h2>
+    <table>
+      <thead><tr><th>File</th><th>Status</th><th>Type</th><th>Bytes</th><th>Errors</th></tr></thead>
+      <tbody>{''.join(inputs) or "<tr><td colspan='5'>No inputs yet</td></tr>"}</tbody>
+    </table>
+    <h2>Jobs</h2>
+    <table>
+      <thead><tr><th>Status</th><th>Type</th><th>Updated</th><th>Error</th><th>Log</th></tr></thead>
+      <tbody>{''.join(job_rows) or "<tr><td colspan='5'>No jobs yet</td></tr>"}</tbody>
+    </table>
+    <h2>Outputs</h2>
+    <ul>{''.join(outputs) or '<li>No outputs yet</li>'}</ul>
+    <h2>History</h2>
+    <ul>{history}</ul>
+  </body>
+</html>
+"""
+
+
+@app.post("/dashboard/runs/{run_id}/queue")
+def queue_run_form(run_id: str, request: Request) -> HTMLResponse:
+    queue_run(run_id, request)
+    return HTMLResponse(f"<meta http-equiv='refresh' content='0; url=/runs/{run_id}'>")
+
+
+@app.post("/dashboard/runs/{run_id}/cancel")
+def cancel_run_form(run_id: str, request: Request) -> HTMLResponse:
+    cancel_run(run_id, request)
+    return HTMLResponse(f"<meta http-equiv='refresh' content='0; url=/runs/{run_id}'>")
+
+
+@app.post("/dashboard/runs/{run_id}/retry")
+def retry_run_form(run_id: str, request: Request) -> HTMLResponse:
+    retry = retry_run(run_id, request)
+    return HTMLResponse(f"<meta http-equiv='refresh' content='0; url=/runs/{retry['run_id']}'>")
+
+
+# Dashboard form conveniences. They intentionally use local-dev identity in
+# file-only mode, while production API calls can require headers through config.
+@app.post("/dashboard/projects")
+async def create_project_form(request: Request) -> HTMLResponse:
+    form = parse_qs((await request.body()).decode("utf-8"))
+    principal = principal_from_request(request, CONFIG)
+    project = create_project(
+        CONFIG,
+        form.get("name", ["Untitled Project"])[0],
+        principal["user_id"],
+        form.get("description", [""])[0],
+    )
+    return HTMLResponse(f"<meta http-equiv='refresh' content='0; url=/projects/{project['id']}'>")
+
+
+@app.post("/dashboard/projects/{project_id}/runs")
+async def create_run_form(project_id: str, request: Request) -> HTMLResponse:
+    form = parse_qs((await request.body()).decode("utf-8"))
+    principal = principal_from_request(request, CONFIG)
+    project = get_project(CONFIG, project_id)
+    assert_project_access(project, principal, "create_run")
+    run = create_run_record(CONFIG, project, principal["user_id"], name=form.get("name", ["Terrain Run"])[0])
+    return HTMLResponse(f"<meta http-equiv='refresh' content='0; url=/runs/{run['run_id']}'>")
+
+
+# Compatibility endpoints retained for the original README curl flow.
+@app.post("/api/runs")
+def create_run_compat(request: Request) -> dict:
+    principal = principal_from_request(request, CONFIG)
+    projects = list_projects(CONFIG, principal)
+    project = projects[0] if projects else create_project(CONFIG, "Local Demo Project", principal["user_id"])
+    return create_run_record(CONFIG, project, principal["user_id"])
+
+
+@app.post("/api/runs/{run_id}/upload-dem")
+async def upload_dem_compat(
+    run_id: str,
+    request: Request,
+    filename: str = Query(default="dem.tif", description="Filename to use for uploaded DEM bytes."),
+) -> dict:
+    principal = principal_from_request(request, CONFIG)
+    run = get_run(CONFIG, run_id)
+    project = project_for_run(run)
+    assert_project_access(project, principal, "upload")
+
+    chunks = []
+    async for chunk in request.stream():
+        chunks.append(chunk)
+    content_b64 = base64.b64encode(b"".join(chunks)).decode("ascii")
+    return ingest_base64_files(CONFIG, run, [{"filename": filename, "content_b64": content_b64}])["run"]
+
+
+def copy_sample_dem_to_run_compat(run_id: str, sample_dem: Path = Path("data/sample/sample_dem.tif")) -> dict:
+    return copy_sample_dem_to_run(CONFIG, run_id, sample_dem)
 
 
 @app.post("/api/runs/{run_id}/use-sample-dem")
-def use_sample_dem(run_id: str) -> dict:
-    return copy_sample_dem_to_run(run_id)
+def use_sample_dem(run_id: str, request: Request) -> dict:
+    principal = principal_from_request(request, CONFIG)
+    run = get_run(CONFIG, run_id)
+    project = project_for_run(run)
+    assert_project_access(project, principal, "upload")
+    return copy_sample_dem_to_run_compat(run_id)
+
+
+def write_legacy_run_metadata(run_id: str) -> dict:
+    base_dir = run_dir(CONFIG, run_id)
+    create_run_folders(base_dir)
+    metadata = {
+        "run_id": run_id,
+        "status": "created",
+        "created_at": "",
+        "updated_at": "",
+        "paths": {"run_dir": str(base_dir)},
+        "outputs": {},
+    }
+    write_json(run_metadata_path(CONFIG, run_id), metadata)
+    return metadata

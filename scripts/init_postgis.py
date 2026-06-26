@@ -45,7 +45,11 @@ def main() -> None:
     if args.dry_run:
         print("PostGIS initialization dry run.")
         print(f"Database URL configured: {'yes' if database_url else 'no'}")
-        print("Schema tables: geovis_runs, geovis_layers, geovis_outputs, geovis_reports, geovis_visualizations")
+        print(
+            "Schema tables: geovis_projects, geovis_runs, geovis_files, "
+            "geovis_run_status_events, geovis_outputs, geovis_reports, "
+            "geovis_visualizations"
+        )
         return
 
     try:

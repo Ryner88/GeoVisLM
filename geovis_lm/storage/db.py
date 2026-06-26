@@ -10,7 +10,19 @@ class DatabaseUnavailableError(RuntimeError):
     """Raised when database settings or drivers are unavailable."""
 
 
-RUN_STATUSES = ("created", "uploaded", "running", "completed", "failed", "archived")
+RUN_STATUSES = (
+    "created",
+    "uploaded",
+    "queued",
+    "running",
+    "completed",
+    "failed",
+    "canceling",
+    "canceled",
+    "retrying",
+    "reported",
+    "archived",
+)
 
 
 def utc_now() -> datetime:
@@ -45,25 +57,73 @@ def schema_sql() -> str:
     return """
 create extension if not exists postgis;
 
+create table if not exists geovis_projects (
+    id uuid primary key,
+    name text not null,
+    slug text not null,
+    owner_user_id text not null,
+    status text not null check (status in ('active', 'archived', 'deleted')),
+    description text not null default '',
+    default_crs text,
+    area_of_interest geometry(Geometry, 4326),
+    metadata jsonb not null default '{}'::jsonb,
+    archived_at timestamptz,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+);
+
 create table if not exists geovis_runs (
     id uuid primary key,
-    status text not null check (status in ('created', 'uploaded', 'running', 'completed', 'failed', 'archived')),
+    project_id uuid references geovis_projects(id) on delete cascade,
+    workflow_type text not null default 'terrain',
+    name text,
+    status text not null check (status in ('created', 'uploaded', 'queued', 'running', 'completed', 'failed', 'canceling', 'canceled', 'retrying', 'reported', 'archived')),
+    created_by_user_id text,
     input_filename text,
     crs text,
     bounds geometry(Polygon, 4326),
+    started_at timestamptz,
+    completed_at timestamptz,
+    failed_at timestamptz,
+    retry_of_run_id uuid references geovis_runs(id),
+    attempt_number integer not null default 1,
+    retryable boolean not null default false,
+    error_code text,
+    error_message text,
+    error_detail text,
+    parameters jsonb not null default '{}'::jsonb,
     metadata jsonb not null default '{}'::jsonb,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
 );
 
-create table if not exists geovis_layers (
+create table if not exists geovis_files (
+    id uuid primary key,
+    project_id uuid references geovis_projects(id) on delete cascade,
+    run_id uuid references geovis_runs(id) on delete cascade,
+    role text not null,
+    file_type text not null,
+    original_filename text,
+    stored_filename text not null,
+    path text not null,
+    status text not null,
+    content_type text,
+    extension text,
+    size_bytes bigint,
+    checksum_sha256 text,
+    crs text,
+    bounds geometry(Geometry, 4326),
+    validation_errors jsonb not null default '[]'::jsonb,
+    metadata jsonb not null default '{}'::jsonb,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+);
+
+create table if not exists geovis_run_status_events (
     id uuid primary key,
     run_id uuid not null references geovis_runs(id) on delete cascade,
-    layer_type text not null,
-    filename text not null,
-    path text not null,
-    crs text,
-    bounds geometry(Polygon, 4326),
+    status text not null,
+    message text,
     metadata jsonb not null default '{}'::jsonb,
     created_at timestamptz not null default now()
 );
@@ -144,11 +204,47 @@ def create_run_record(
     return run_id
 
 
-def store_uploaded_layer_metadata(
-    layer_id: str,
-    run_id: str,
-    layer_type: str,
+def create_project_record(
+    project_id: str,
+    name: str,
+    slug: str,
+    owner_user_id: str,
+    status: str = "active",
+    description: str = "",
+    metadata: dict[str, Any] | None = None,
+    database_url: str | None = None,
+) -> str:
+    with connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                insert into geovis_projects (id, name, slug, owner_user_id, status, description, metadata, updated_at)
+                values (%s, %s, %s, %s, %s, %s, %s, now())
+                on conflict (id) do update set
+                    name = excluded.name,
+                    slug = excluded.slug,
+                    owner_user_id = excluded.owner_user_id,
+                    status = excluded.status,
+                    description = excluded.description,
+                    metadata = excluded.metadata,
+                    updated_at = now()
+                """,
+                (project_id, name, slug, owner_user_id, status, description, metadata or {}),
+            )
+        conn.commit()
+    return project_id
+
+
+def store_file_metadata(
+    file_id: str,
+    project_id: str,
+    run_id: str | None,
+    role: str,
+    file_type: str,
+    stored_filename: str,
     path: str | Path,
+    status: str,
+    original_filename: str | None = None,
     crs: str | None = None,
     metadata: dict[str, Any] | None = None,
     database_url: str | None = None,
@@ -158,19 +254,66 @@ def store_uploaded_layer_metadata(
         with conn.cursor() as cur:
             cur.execute(
                 """
-                insert into geovis_layers (id, run_id, layer_type, filename, path, crs, metadata)
-                values (%s, %s, %s, %s, %s, %s, %s)
+                insert into geovis_files (
+                    id, project_id, run_id, role, file_type, original_filename,
+                    stored_filename, path, status, crs, metadata, updated_at
+                )
+                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
                 on conflict (id) do update set
-                    layer_type = excluded.layer_type,
-                    filename = excluded.filename,
+                    role = excluded.role,
+                    file_type = excluded.file_type,
+                    original_filename = excluded.original_filename,
+                    stored_filename = excluded.stored_filename,
                     path = excluded.path,
+                    status = excluded.status,
                     crs = excluded.crs,
-                    metadata = excluded.metadata
+                    metadata = excluded.metadata,
+                    updated_at = now()
                 """,
-                (layer_id, run_id, layer_type, path.name, str(path), crs, metadata or {}),
+                (
+                    file_id,
+                    project_id,
+                    run_id,
+                    role,
+                    file_type,
+                    original_filename or stored_filename,
+                    stored_filename,
+                    str(path),
+                    status,
+                    crs,
+                    metadata or {},
+                ),
             )
         conn.commit()
-    return layer_id
+    return file_id
+
+
+def store_uploaded_layer_metadata(
+    layer_id: str,
+    run_id: str,
+    layer_type: str,
+    path: str | Path,
+    crs: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    database_url: str | None = None,
+) -> str:
+    file_metadata = metadata or {}
+    project_id = file_metadata.pop("project_id", None)
+    if project_id is None:
+        raise ValueError("metadata.project_id is required for uploaded layer metadata")
+    return store_file_metadata(
+        layer_id,
+        project_id,
+        run_id,
+        role="input",
+        file_type=layer_type,
+        stored_filename=Path(path).name,
+        path=path,
+        status=file_metadata.pop("status", "valid"),
+        crs=crs,
+        metadata=file_metadata,
+        database_url=database_url,
+    )
 
 
 def store_output_metadata(

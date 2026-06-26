@@ -1,9 +1,14 @@
 # GeoVisLM Deployment Path
 
-This document defines the operational deployment plan for GeoVisLM, including
+This document defines the operational deployment path for GeoVisLM, including
 environment variables, persistent storage layout, service layout, and
-health-check requirements. It is a specification only; implementation can follow
-after the project/run model, storage layer, and dashboard runtime mature.
+health-check requirements.
+
+Implementation status: initial container deployment is available through
+`Dockerfile`, `docker-compose.yml`, `.env.example`, and the FastAPI health
+endpoints. The current worker path uses FastAPI background tasks for bounded
+local execution; a separate worker service remains the next scaling step for
+large production workloads.
 
 ## Deployment Goals
 
@@ -67,25 +72,24 @@ storage  -> stores uploaded bytes and generated artifacts
 
 ## Environment Variables
 
-Required in operational deployments:
+Implemented settings:
 
-- `GEOVIS_ENV`: `development`, `staging`, or `production`
-- `GEOVIS_DATABASE_URL`: PostgreSQL/PostGIS connection URL
-- `GEOVIS_STORAGE_ROOT`: root path for persistent local file storage
-- `GEOVIS_SECRET_KEY`: secret used for sessions, tokens, or signing
-- `GEOVIS_BASE_URL`: external base URL for generated links
-
-Upload and ingestion limits:
-
+- `GEOVIS_OUTPUT_ROOT`: root path for persistent local file storage
+- `GEOVIS_DATABASE_URL`: optional PostgreSQL/PostGIS connection URL
+- `GEOVIS_REQUIRE_AUTH`: requires `x-geovis-user` identity headers when true
 - `GEOVIS_MAX_UPLOAD_FILE_MB`
 - `GEOVIS_MAX_UPLOAD_BATCH_MB`
 - `GEOVIS_MAX_BATCH_FILES`
-- `GEOVIS_ALLOWED_UPLOAD_TYPES`
+
+Additional recommended production settings:
+
+- `GEOVIS_ENV`: `development`, `staging`, or `production`
+- `GEOVIS_SECRET_KEY`: secret used for sessions, tokens, or signing
+- `GEOVIS_BASE_URL`: external base URL for generated links
 
 Auth and permissions:
 
 - `GEOVIS_AUTH_PROVIDER`
-- `GEOVIS_DEV_AUTH_BYPASS`
 - `GEOVIS_ADMIN_EMAILS`
 
 Runtime:
@@ -111,28 +115,22 @@ Rules:
 
 ## Persistent Storage Layout
 
-For filesystem storage, use one configured root:
+For filesystem storage, use `GEOVIS_OUTPUT_ROOT`:
 
 ```text
-<GEOVIS_STORAGE_ROOT>/
+<GEOVIS_OUTPUT_ROOT>/
+  runs/
+    <run_id>/
+      inputs/
+        raw/
+        validated/
+      maps/
+      renders/
+      reports/
+      logs/
   projects/
     <project_id>/
-      runs/
-        <run_id>/
-          inputs/
-            raw/
-            validated/
-          maps/
-          vectors/
-          renders/
-          reports/
-          logs/
-          temp/
-      shared/
-      exports/
-  system/
-    cleanup/
-    migrations/
+      project.json
 ```
 
 Rules:
@@ -166,18 +164,28 @@ Operational tables should cover:
 
 ## Deployment Steps
 
-Initial staging deployment:
+Initial container deployment:
 
-1. Build application image.
-2. Provision PostgreSQL/PostGIS.
-3. Provision persistent storage volume or bucket.
-4. Configure environment variables.
-5. Run database schema initialization or migrations.
-6. Start `web` service.
-7. Start `worker` service.
-8. Run health checks.
-9. Upload a small DEM and validate a terrain run.
-10. Generate and download a Markdown report.
+1. Copy `.env.example` to `.env`.
+2. Run `docker compose up --build`.
+3. Initialize PostGIS metadata tables with `python3 scripts/init_postgis.py` when database metadata is required.
+4. Check `GET /healthz` and `GET /readyz`.
+5. Create a project and terrain run.
+6. Upload a small DEM and validate a terrain run.
+7. Generate and download a Markdown report.
+
+Repo-side validation that does not require Docker:
+
+```bash
+python3 scripts/validate_docker_deployment.py
+```
+
+Docker-capable host validation:
+
+```bash
+python3 scripts/validate_docker_deployment.py --compose-config
+docker compose up --build
+```
 
 Production deployment adds:
 

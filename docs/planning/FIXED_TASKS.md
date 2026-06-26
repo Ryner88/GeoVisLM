@@ -218,6 +218,221 @@ Notes:
 
 - QGIS must be installed separately for real Processing execution.
 
+### `[DONE]` Operational Dashboard Foundation
+
+Implemented:
+
+- File-backed project and run model with owner metadata, run lifecycle history, retry metadata, failure fields, and run-scoped output directories.
+- Operational dashboard/API workflow for project creation, run creation, run history, output browsing, status history, failure inspection, analysis, retries, cancellation, and report generation.
+- Validated batch file ingestion for GeoTIFF, GeoJSON/JSON, CSV, and Shapefile bundle components.
+- Upload safety controls for extension allowlists, filename normalization, path traversal rejection, base64 payload validation, SHA-256 checksums, per-file validation status, and configurable upload limits.
+- Authentication and authorization controls using `GEOVIS_REQUIRE_AUTH`, `x-geovis-user`, and project ownership/role checks.
+- Background execution entry point through `POST /api/runs/<run_id>/queue`, with queued/running/completed/failed lifecycle state persisted to run metadata.
+- Health and readiness endpoints at `/healthz` and `/readyz`.
+- Optional PostGIS schema support for projects, runs, files, run status events, outputs, reports, and visualizations.
+- Production deployment scaffold with `.env.example`, `Dockerfile`, `docker-compose.yml`, `.dockerignore`, persistent output/PostGIS volumes, and container health checks.
+- CI test workflow at `.github/workflows/tests.yml`.
+- Operational pytest suite in `tests/test_dashboard_operational.py`.
+- README, deployment, and storage schema documentation updates.
+
+Verified:
+
+- `python3 -m py_compile geovis_lm/dashboard/app.py geovis_lm/dashboard/operations.py geovis_lm/storage/db.py`
+- `timeout 120 .venv/bin/python -m pytest -q tests/test_dashboard_operational.py`
+
+Notes:
+
+- File-only mode remains the default local/demo path.
+- Database-backed metadata is schema-ready, but the dashboard still uses file-backed metadata unless a future integration layer routes writes through PostGIS.
+- Background execution currently uses FastAPI background tasks; a dedicated worker service remains the recommended next scaling step for long production GIS workloads.
+
+### `[DONE]` Create GIS and ParaView Templates Library
+
+Implemented:
+
+- Template-ready project/run metadata structure with workflow type, parameters, inputs, outputs, reports, and retry lineage.
+- JSON-compatible workflow parameters persisted per run.
+- Import/export-friendly file metadata and report records.
+
+Verified:
+
+- Run creation accepts workflow parameters through `POST /api/projects/<project_id>/runs`.
+- Parameters persist in run metadata and are copied into retry runs.
+
+Notes:
+
+- A dedicated template UI and named template registry can now be built on top of the persisted project/run model.
+
+### `[DONE]` Validate Full Docker Compose Runtime
+
+Completed the previously blocked Docker Compose runtime validation.
+
+Implemented:
+
+- Started Docker Desktop from the WSL environment and validated the Docker Engine through the Docker Desktop CLI.
+- Created a local gitignored `.env` from `.env.example` for Compose runtime validation.
+- Updated the Docker image to install `psycopg[binary]` so PostGIS schema helpers can connect from the dashboard container.
+- Updated `scripts/validate_docker_deployment.py` to fall back to Docker Desktop's Windows CLI path when the WSL `docker` shim is unavailable.
+
+Verified:
+
+- `docker compose config` passes through Docker Desktop's CLI.
+- `docker compose up --build -d` builds and starts the dashboard and PostGIS services.
+- `docker compose ps` reports both dashboard and database containers healthy.
+- `/healthz` returns `{"status":"ok"}`.
+- `/readyz` returns ready status with storage, database mode, and auth configured.
+- `python scripts/init_postgis.py --dry-run` passes inside the dashboard container.
+- `python scripts/init_postgis.py` initializes the container PostGIS schema.
+- A live Compose API workflow created a project, uploaded `data/sample/sample_dem.tif`, queued a terrain run, processed it with `scripts/run_worker_once.py --json`, generated a report, and listed outputs/jobs.
+- The dashboard container was restarted and the same reported run, completed job, and 8 input/output files were still visible through the API.
+
+Result:
+
+- Docker Compose runtime validation is no longer blocked in this environment.
+- Runtime validation summary was written to the mounted output volume at `/app/outputs/docker_runtime_validation.json` inside the dashboard container.
+
+### `[DONE]` Add Real DEM Analysis Execution Adapter
+
+Implemented a dedicated DEM terrain analysis adapter behind the dashboard and worker execution path.
+
+Implemented:
+
+- Added `geovis_lm/dashboard/analysis_adapter.py` with a `dem_terrain` execution adapter.
+- Moved DEM terrain execution behind a structured adapter result and structured execution error contract.
+- Adapter validates DEM input existence and supported GeoTIFF extensions before execution.
+- Adapter writes `slope_degrees.tif`, `hillshade.tif`, `terrain_risk.tif`, and `terrain_summary.json`.
+- Dashboard analysis now persists `execution_adapter`, `execution_metadata`, output paths, CRS, and structured error details.
+- Worker execution continues to process queued runs through the same dashboard analysis workflow.
+
+Verified:
+
+- Direct dashboard analysis still completes for `data/sample/sample_dem.tif`.
+- Queued worker analysis still completes through `scripts/run_worker_once.py`.
+- Dashboard output listing includes the DEM outputs, summary JSON, uploaded DEM, and generated report.
+- Unsupported non-DEM input fails with `unsupported_input` and `retryable=false`.
+- Adapter execution failures capture stage, error type, input path, and stage logs.
+- `python3 -m py_compile geovis_lm/dashboard/app.py geovis_lm/dashboard/analysis_adapter.py tests/test_dashboard_operational.py`
+- `timeout 120 .venv/bin/python -m pytest -q`
+
+Result:
+
+- `11 passed, 3 warnings`.
+
+### `[DONE]` Extend Analysis Adapter to Vector Overlays and Renders
+
+Extended the DEM adapter to support vector overlay processing and render outputs.
+
+Implemented:
+
+- Adapter detects valid vector inputs attached to a run.
+- GeoJSON/vector inputs are validated, reprojected to the DEM CRS, and clipped to DEM bounds.
+- Clipped vector outputs are written as run-scoped GeoJSON files.
+- Optional `terrain_overlay.png` render output combines the DEM preview and clipped vector boundaries.
+- `render_overlay=false` disables render generation while preserving vector overlay processing.
+- Adapter metadata records source CRS, target CRS, feature counts, clipped feature counts, render status, and stage logs.
+- Dashboard output listing includes raster, vector, render, summary, and report artifacts.
+
+Verified:
+
+- DEM-only adapter execution still passes.
+- DEM + `data/sample/sample_overlay.geojson` generates `sample_overlay_clipped.geojson`.
+- DEM + vector execution generates `terrain_overlay.png` when render output is enabled.
+- Render-disabled execution skips `terrain_overlay.png` while still writing clipped vector output.
+- Unsupported vector input fails with `unsupported_vector_input` and `retryable=false`.
+
+### `[DONE]` Add Browser Dashboard Login Session Flow
+
+Implemented browser-native authentication for the server-rendered dashboard while preserving API bearer-token auth.
+
+Implemented:
+
+- Added `/login` page for entering the configured dashboard token.
+- Added signed `geovis_session` cookie support using the configured auth token.
+- Added `/logout` to clear the browser session.
+- Dashboard page requests redirect unauthenticated browser users to `/login`.
+- API routes continue returning JSON `401` responses when bearer auth is missing or invalid.
+- Existing project ownership and role checks now work with either bearer-token principals or browser-session principals.
+
+Verified:
+
+- Unauthenticated browser navigation to `/` redirects to `/login?next=/`.
+- Invalid login redirects back to `/login?error=1`.
+- Valid login grants browser access to the dashboard.
+- Browser session can create a project through the server-rendered form path.
+- Logout clears dashboard access.
+- API bearer-token auth continues to work unchanged.
+- `python3 -m py_compile geovis_lm/dashboard/app.py geovis_lm/dashboard/operations.py geovis_lm/dashboard/analysis_adapter.py tests/test_dashboard_operational.py`
+- `timeout 120 .venv/bin/python -m pytest -q`
+
+Result:
+
+- `15 passed, 7 warnings`.
+
+### `[DONE]` Fix Dashboard Project and Run Visibility Consistency
+
+Fixed dashboard recent-run visibility so it matches the current authenticated principal's visible projects.
+
+Implemented:
+
+- Added shared visible-run filtering based on the current user's visible project IDs.
+- Updated the dashboard index page to show only runs whose parent project is visible.
+- Updated `GET /api/runs` without a project filter to use the same visibility rule.
+- Recent Runs now includes the parent project link/name for each visible run.
+- Orphaned runs and cross-user runs no longer appear on the dashboard index for unrelated users.
+
+Verified:
+
+- Same-user projects and runs appear together on `/`.
+- Cross-user projects and runs are hidden from `/` and `GET /api/runs`.
+- Orphaned runs with missing parent projects are hidden from `/` and `GET /api/runs`.
+
+### `[DONE]` Create Project Timeline View
+
+Implemented:
+
+- Run status history with timestamped lifecycle events.
+- Dashboard project pages that list project runs.
+- Run detail pages that display current status, errors, outputs, and status history.
+- API support for listing runs by project and across projects.
+
+Verified:
+
+- Operational tests assert status history for completed analysis runs.
+- Failed runs preserve failure state and retry metadata.
+
+### `[DONE]` Operational Queue, Worker, Smoke Test, and Auth Hardening
+
+Completed the next operational dashboard cycle.
+
+Included:
+
+- End-to-end local HTTP smoke test at `scripts/local_operational_smoke.py`.
+- Durable file-backed job records under `GEOVIS_OUTPUT_ROOT/jobs/`.
+- Queue endpoint now creates a durable queued job instead of relying only on FastAPI background tasks.
+- Worker module at `geovis_lm/dashboard/worker.py` and CLI entry point at `scripts/run_worker_once.py`.
+- Worker execution claims queued jobs, runs terrain analysis, writes job logs, and updates job/run status.
+- Retryable failed runs now create a retry run and queue a durable worker job.
+- Dashboard project page now shows run status, owner, timestamps, input count, and output count.
+- Dashboard run page now shows input metadata, jobs, outputs, lifecycle history, errors, and conditional queue/cancel/retry actions.
+- Operational auth now requires `GEOVIS_AUTH_TOKEN` when `GEOVIS_REQUIRE_AUTH=true`; raw user headers are no longer trusted without a valid bearer token.
+- Project, run, and job listing APIs are scoped to visible projects.
+- Docker scaffold validation script at `scripts/validate_docker_deployment.py`.
+- CI now runs pytest, the local operational smoke test, and deployment scaffold validation.
+- README and deployment docs now cover token auth, worker execution, smoke testing, and Docker validation.
+
+Verification:
+
+- `python3 -m py_compile geovis_lm/dashboard/app.py geovis_lm/dashboard/operations.py geovis_lm/dashboard/worker.py scripts/run_worker_once.py scripts/local_operational_smoke.py scripts/validate_docker_deployment.py scripts/init_postgis.py`
+- `timeout 120 .venv/bin/python -m pytest -q`
+- `timeout 90 .venv/bin/python scripts/local_operational_smoke.py`
+- `python3 scripts/validate_docker_deployment.py`
+
+Notes:
+
+- Result: `8 passed, 2 warnings`.
+- Live Uvicorn smoke test passed.
+- Full Docker Compose runtime validation was completed in the follow-up Docker runtime validation task.
+
 ### `[DONE]` Add PostGIS Storage
 
 Implemented:
