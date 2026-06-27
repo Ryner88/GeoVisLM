@@ -9,20 +9,7 @@ Status labels:
 
 ## Current Priority Queue
 
-### 1. `[TODO]` Add Persistent Docker Worker Service
-
-Goal: run queued jobs continuously in Docker Compose instead of relying only on one-shot worker scripts.
-
-Acceptance criteria:
-
-- Compose starts a dedicated worker service.
-- Worker polls or claims durable queued jobs.
-- Worker survives dashboard restarts.
-- Worker restart does not duplicate completed jobs.
-- Dashboard shows job claimed/running/completed/failed states.
-- Tests or smoke validation prove dashboard + worker process one queued run end-to-end.
-
-### 2. `[TODO]` Add Artifact Preview and Download UX
+### 1. `[TODO]` Add Artifact Preview and Download UX
 
 Goal: make generated DEM, vector, and render outputs usable from the dashboard.
 
@@ -34,7 +21,7 @@ Acceptance criteria:
 - Output file metadata shows type, size, checksum, and generated stage.
 - Access control applies to every output download route.
 
-### 3. `[TODO]` Add Browser End-to-End Workflow Test
+### 2. `[TODO]` Add Browser End-to-End Workflow Test
 
 Goal: validate the manual dashboard path, not just API workflows.
 

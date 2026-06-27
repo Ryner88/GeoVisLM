@@ -6,9 +6,8 @@ health-check requirements.
 
 Implementation status: initial container deployment is available through
 `Dockerfile`, `docker-compose.yml`, `.env.example`, and the FastAPI health
-endpoints. The current worker path uses FastAPI background tasks for bounded
-local execution; a separate worker service remains the next scaling step for
-large production workloads.
+endpoints. The Compose path includes a dedicated worker service that polls
+durable queued jobs and shares persistent output storage with the dashboard.
 
 ## Deployment Goals
 
@@ -168,11 +167,12 @@ Initial container deployment:
 
 1. Copy `.env.example` to `.env`.
 2. Run `docker compose up --build`.
-3. Initialize PostGIS metadata tables with `python3 scripts/init_postgis.py` when database metadata is required.
-4. Check `GET /healthz` and `GET /readyz`.
-5. Create a project and terrain run.
-6. Upload a small DEM and validate a terrain run.
-7. Generate and download a Markdown report.
+3. Confirm the `dashboard`, `worker`, and `db` services are healthy.
+4. Initialize PostGIS metadata tables with `python3 scripts/init_postgis.py` when database metadata is required.
+5. Check `GET /healthz` and `GET /readyz`.
+6. Create a project and terrain run.
+7. Upload a small DEM/vector input pair and queue the run.
+8. Confirm the worker service completes the run and generated outputs persist.
 
 Repo-side validation that does not require Docker:
 
@@ -185,6 +185,7 @@ Docker-capable host validation:
 ```bash
 python3 scripts/validate_docker_deployment.py --compose-config
 docker compose up --build
+docker compose exec -T dashboard python scripts/compose_worker_smoke.py
 ```
 
 Production deployment adds:

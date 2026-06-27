@@ -82,6 +82,8 @@ def main() -> None:
 
     contains(dockerfile, "uvicorn")
     contains(compose, "postgis/postgis")
+    contains(compose, "worker:")
+    contains(compose, "--loop")
     contains(compose, "geovis_outputs")
     contains(compose, "/readyz")
     contains(env_example, "GEOVIS_OUTPUT_ROOT")

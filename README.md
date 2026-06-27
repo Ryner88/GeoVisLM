@@ -160,10 +160,16 @@ the full project, upload, analysis, report, and output workflow:
 .venv/bin/python scripts/local_operational_smoke.py
 ```
 
-Queued work can be executed by the file-backed worker command:
+Queued work can be executed once by the file-backed worker command:
 
 ```bash
 .venv/bin/python scripts/run_worker_once.py --json
+```
+
+For continuous local processing, run:
+
+```bash
+.venv/bin/python scripts/run_worker_once.py --loop
 ```
 
 ## Vector Overlays
@@ -224,8 +230,9 @@ cp .env.example .env
 docker compose up --build
 ```
 
-The Compose stack runs the dashboard, PostGIS, persistent output storage, and
-health checks. The dashboard exposes `GET /healthz` and `GET /readyz`.
+The Compose stack runs the dashboard, a persistent worker service, PostGIS,
+persistent output storage, and health checks. The dashboard exposes
+`GET /healthz` and `GET /readyz`.
 
 Validate the deployment scaffold without requiring Docker:
 
@@ -237,4 +244,11 @@ On a Docker-capable host, also validate Compose syntax:
 
 ```bash
 python3 scripts/validate_docker_deployment.py --compose-config
+```
+
+After the stack is running, validate that the worker service processes a queued
+DEM/vector run without manually invoking the worker:
+
+```bash
+docker compose exec -T dashboard python scripts/compose_worker_smoke.py
 ```

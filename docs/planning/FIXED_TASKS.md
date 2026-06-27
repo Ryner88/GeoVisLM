@@ -386,6 +386,41 @@ Verified:
 - Cross-user projects and runs are hidden from `/` and `GET /api/runs`.
 - Orphaned runs with missing parent projects are hidden from `/` and `GET /api/runs`.
 
+### `[DONE]` Add Persistent Docker Worker Service
+
+Added a first-class Docker Compose worker service for continuous queued job processing.
+
+Implemented:
+
+- Added `run_worker_loop` to poll and claim durable queued jobs continuously.
+- Extended `scripts/run_worker_once.py` with `--loop`, `--poll-interval`, and `--max-iterations`.
+- Added a `worker` service to `docker-compose.yml` using the dashboard image and shared output volume.
+- Worker service depends on healthy dashboard and PostGIS services.
+- Added a worker health check that exercises one non-destructive poll iteration.
+- Added `scripts/compose_worker_smoke.py` to prove dashboard + worker process a queued DEM/vector run without manually invoking the worker.
+- Updated deployment validation and docs to include the worker service.
+
+Verified:
+
+- Compose starts dashboard, worker, and PostGIS services.
+- Worker claims queued jobs from durable metadata.
+- Worker processes DEM/vector runs end-to-end and writes raster, vector, render, and metadata artifacts.
+- Completed job/run visibility survives dashboard service restarts through mounted output storage.
+- Worker restart does not duplicate completed jobs because only `queued` jobs are claimed.
+- Failed worker execution preserves structured run/job error metadata through the existing worker failure path.
+- `python3 -m py_compile geovis_lm/dashboard/worker.py scripts/run_worker_once.py scripts/compose_worker_smoke.py scripts/validate_docker_deployment.py`
+- `timeout 120 .venv/bin/python -m pytest -q`
+- `python3 scripts/validate_docker_deployment.py`
+- `python3 scripts/validate_docker_deployment.py --compose-config`
+- `docker compose up --build -d`
+- `docker compose exec -T dashboard python scripts/compose_worker_smoke.py`
+
+Result:
+
+- `17 passed, 7 warnings`.
+- Compose worker smoke completed one queued DEM/vector run with one completed job and 12 output files.
+- After dashboard and worker restart, the same run remained completed with one completed job and 12 output files.
+
 ### `[DONE]` Create Project Timeline View
 
 Implemented:

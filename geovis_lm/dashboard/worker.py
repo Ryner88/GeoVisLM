@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
 from typing import Callable
 
 from geovis_lm.dashboard.operations import (
@@ -71,3 +72,20 @@ def run_worker_once(config: DashboardConfig, analyze_run: AnalyzeRun) -> dict:
             error_message=str(exc),
         )
         return {"status": "failed", "job": job}
+
+
+def run_worker_loop(
+    config: DashboardConfig,
+    analyze_run: AnalyzeRun,
+    *,
+    poll_interval_seconds: float = 5.0,
+    max_iterations: int | None = None,
+) -> None:
+    iterations = 0
+    while True:
+        result = run_worker_once(config, analyze_run)
+        if result["status"] == "idle":
+            time.sleep(poll_interval_seconds)
+        iterations += 1
+        if max_iterations is not None and iterations >= max_iterations:
+            return
