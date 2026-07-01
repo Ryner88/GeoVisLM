@@ -9,27 +9,30 @@ Status labels:
 
 ## Current Priority Queue
 
-### 1. `[DONE]` Add Artifact Preview and Download UX
+### 1. `[TODO]` Add Flood Risk Workflow
 
-Goal: make generated DEM, vector, and render outputs usable from the dashboard.
-
-Acceptance criteria:
-
-- Run detail page lists slope, hillshade, risk, summary JSON, clipped vectors, and overlay render outputs.
-- PNG renders can be previewed in browser.
-- GeoTIFF, GeoJSON, and JSON outputs can be downloaded.
-- Output file metadata shows type, size, checksum, and generated stage.
-- Access control applies to every output download route.
-
-### 2. `[DONE]` Add Browser End-to-End Workflow Test
-
-Goal: validate the manual dashboard path, not just API workflows.
+Goal: combine DEM-derived terrain outputs, river proximity, slope, and optional building footprint overlays into a basic flood-risk analysis workflow.
 
 Acceptance criteria:
 
-- Test logs in through `/login`.
-- Test creates a project through the browser form.
-- Test uploads DEM/vector inputs through dashboard pages.
-- Test queues a run.
-- Test confirms outputs appear after worker execution.
-- Test verifies logout blocks dashboard access again.
+- Workflow loads a DEM and at least one river or stream vector layer.
+- River buffers are generated.
+- DEM/slope-derived terrain risk is combined with river proximity.
+- Flood-risk output is written to a run-scoped output folder.
+- Output classes are documented.
+- Workflow works without dashboard or PostGIS.
+- README or workflow documentation explains input requirements and limitations.
+
+### 2. `[TODO]` Add Wildfire Risk Workflow
+
+Goal: combine slope, vegetation/fuel data, optional wind or sensor inputs, and proximity layers into a basic wildfire-risk analysis workflow.
+
+Acceptance criteria:
+
+- Workflow loads DEM and vegetation/fuel input.
+- Slope is generated or reused from terrain workflow logic.
+- Vegetation/fuel classes are normalized into stable risk inputs.
+- Wildfire-risk output is written to disk.
+- Output classes are documented.
+- Workflow works without dashboard or PostGIS.
+- README or workflow documentation explains input requirements and limitations.

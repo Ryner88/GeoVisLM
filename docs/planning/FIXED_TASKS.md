@@ -494,6 +494,31 @@ Notes:
 - The project still works in file-only mode when PostGIS is not configured.
 - A real PostGIS connection requires installing the optional `psycopg` package.
 
+### `[DONE]` GeoVis LM Priority Queue Completed
+
+Completed and pushed to `main` at commit `2066852`.
+
+Completed items:
+
+1. `[DONE]` Add Persistent Docker Worker Service
+2. `[DONE]` Add Artifact Preview and Download UX
+3. `[DONE]` Add Browser End-to-End Workflow Test
+
+Validation:
+
+- Artifact branch merge validation: `20 passed, 11 warnings`
+- Browser E2E merge validation: `21 passed, 13 warnings`
+- `git diff --check` passed
+- `git push` succeeded
+
+Notes:
+
+- `python3 -m pytest -q` was unavailable because system Python lacked pytest.
+- Validation was correctly run with `.venv/bin/python -m pytest -q`.
+- `py_compile` required `globstar` because `**` did not expand in the shell by default.
+- Remaining warnings are dependency/runtime deprecation warnings from NumPy under `.venv/lib/python3.12/site-packages/numpy/ma/core.py`, triggered by `tests/test_dashboard_operational.py`.
+- These warnings did not fail the suite.
+
 ### `[DONE]` Add Artifact Preview and Download UX
 
 Implemented:

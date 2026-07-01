@@ -11,128 +11,21 @@ Status labels:
 
 ## Future Queue
 
-### `[TODO]` Add Flood Risk Workflow
+### `[TODO]` Investigate NumPy 2.5 MaskedArray Deprecation Warnings
 
-Goal: combine DEM-derived terrain outputs, river proximity, slope, and building footprint overlays into a basic flood-risk analysis workflow.
-
-Build when active:
-
-* Add flood workflow module, for example:
-
-  * `geovis_lm/workflows/flood_risk.py`
-* Accept inputs:
-
-  * DEM raster
-  * river/stream vector layer
-  * optional building footprint vector layer
-  * optional administrative boundary or area-of-interest layer
-* Generate derived outputs:
-
-  * slope raster
-  * river buffer layer
-  * low-elevation mask or relative elevation classification
-  * flood-risk raster or vector layer
-* Classify flood risk into stable classes:
-
-  * low
-  * medium
-  * high
-* Export outputs under a predictable run folder:
-
-  * `outputs/runs/<run_id>/flood/`
-* Add report support for flood-risk outputs.
-* Add GeoMiniLM starter examples for flood-risk workflows.
-
-Suggested CLI:
-
-```bash
-python scripts/run_flood_risk.py \
-  --dem data/sample/sample_dem.tif \
-  --rivers data/sample/rivers.geojson \
-  --buildings data/sample/buildings.geojson \
-  --output-dir outputs/runs/sample_flood/flood
-```
+Goal: keep the test suite warning-clean and avoid future NumPy compatibility breaks.
 
 Acceptance criteria:
 
-* Workflow loads a DEM and at least one river vector layer.
-* River buffers are generated.
-* DEM/slope-derived terrain risk is combined with river proximity.
-* Flood-risk output is written to disk.
-* Output classes are documented.
-* Workflow works without dashboard or PostGIS.
-* README or workflow documentation explains input requirements and limitations.
+* Identify whether warnings originate from GeoVisLM code or third-party geospatial dependencies.
+* If from GeoVisLM code, update array handling to use `np.reshape(..., copy=False)` or another supported path.
+* If from dependencies, document the upstream source and pin or upgrade strategy.
+* Test suite runs without unexpected NumPy deprecation warnings, or warnings are intentionally filtered with justification.
 
-Validation:
+Notes:
 
-```bash
-python3 -m py_compile geovis_lm/workflows/flood_risk.py
-python3 scripts/run_flood_risk.py --help
-```
-
----
-
-### `[TODO]` Add Wildfire Risk Workflow
-
-Goal: combine slope, vegetation/fuel data, wind or sensor inputs, and proximity layers into a basic wildfire-risk analysis workflow.
-
-Build when active:
-
-* Add wildfire workflow module, for example:
-
-  * `geovis_lm/workflows/wildfire_risk.py`
-* Accept inputs:
-
-  * DEM raster
-  * vegetation/fuel raster or vector layer
-  * optional wind/sensor data file
-  * optional roads/buildings/settlements vector layer
-* Generate derived outputs:
-
-  * slope raster
-  * vegetation/fuel classification
-  * proximity-to-assets layer
-  * wildfire-risk raster or vector layer
-* Classify wildfire risk into stable classes:
-
-  * low
-  * medium
-  * high
-  * extreme, if justified by input data
-* Export outputs under:
-
-  * `outputs/runs/<run_id>/wildfire/`
-* Add report support for wildfire-risk outputs.
-* Add GeoMiniLM starter examples for wildfire workflows.
-
-Suggested CLI:
-
-```bash
-python scripts/run_wildfire_risk.py \
-  --dem data/sample/sample_dem.tif \
-  --vegetation data/sample/vegetation.geojson \
-  --assets data/sample/buildings.geojson \
-  --output-dir outputs/runs/sample_wildfire/wildfire
-```
-
-Acceptance criteria:
-
-* Workflow loads DEM and vegetation/fuel input.
-* Slope is incorporated into risk scoring.
-* Proximity layers can be incorporated when available.
-* Wildfire-risk output is written to disk.
-* Classification logic is documented.
-* Workflow works without dashboard, QGIS, or PostGIS.
-* README or workflow documentation explains limitations.
-
-Validation:
-
-```bash
-python3 -m py_compile geovis_lm/workflows/wildfire_risk.py
-python3 scripts/run_wildfire_risk.py --help
-```
-
----
+* Current warnings are dependency/runtime deprecation warnings from NumPy under `.venv/lib/python3.12/site-packages/numpy/ma/core.py`, triggered by `tests/test_dashboard_operational.py`.
+* These warnings did not fail the suite during the priority queue completion validation.
 
 ### `[TODO]` Train First GeoMiniLM Prototype
 
