@@ -21,7 +21,7 @@ Acceptance criteria:
 - Output file metadata shows type, size, checksum, and generated stage.
 - Access control applies to every output download route.
 
-### 2. `[TODO]` Add Browser End-to-End Workflow Test
+### 2. `[DONE]` Add Browser End-to-End Workflow Test
 
 Goal: validate the manual dashboard path, not just API workflows.
 

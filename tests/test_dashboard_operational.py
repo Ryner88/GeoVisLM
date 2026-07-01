@@ -4,6 +4,7 @@ import asyncio
 import base64
 import importlib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -133,6 +134,88 @@ def test_browser_login_session_and_logout_flow(app_module):
 
     bearer = request(app_module.app, "get", "/api/projects", headers=auth())
     assert bearer.status_code == 200
+
+
+def test_browser_end_to_end_workflow_from_login_to_outputs(app_module):
+    from geovis_lm.dashboard.worker import run_worker_once
+
+    async def browser_flow():
+        async with AsyncClient(transport=ASGITransport(app=app_module.app), base_url="http://testserver") as client:
+            unauthenticated = await client.get("/", follow_redirects=False)
+            assert unauthenticated.status_code == 303
+            assert unauthenticated.headers["location"] == "/login?next=/"
+
+            login = await client.post(
+                "/login",
+                data={"token": "test-token", "user_id": "browser-e2e-user", "role": "owner", "next": "/"},
+                follow_redirects=False,
+            )
+            assert login.status_code == 303
+
+            project_response = await client.post(
+                "/dashboard/projects",
+                data={"name": "Browser E2E Project", "description": "Dashboard workflow"},
+            )
+            assert project_response.status_code == 200
+            project_id = re.search(r"/projects/([a-f0-9]+)", project_response.text).group(1)
+
+            project_page = await client.get(f"/projects/{project_id}")
+            assert project_page.status_code == 200
+            assert "Browser E2E Project" in project_page.text
+
+            run_response = await client.post(
+                f"/dashboard/projects/{project_id}/runs",
+                data={"name": "Browser E2E Run"},
+            )
+            assert run_response.status_code == 200
+            run_id = re.search(r"/runs/([a-f0-9]+)", run_response.text).group(1)
+
+            run_page = await client.get(f"/runs/{run_id}")
+            assert run_page.status_code == 200
+            assert "Upload Input" in run_page.text
+
+            uploads = [
+                ("sample_dem.tif", "image/tiff", Path("data/sample/sample_dem.tif")),
+                ("sample_overlay.geojson", "application/geo+json", Path("data/sample/sample_overlay.geojson")),
+            ]
+            for filename, content_type, path in uploads:
+                upload = await client.post(
+                    f"/dashboard/projects/{project_id}/runs/{run_id}/files",
+                    data={
+                        "filename": filename,
+                        "content_type": content_type,
+                        "content_b64": b64(path),
+                    },
+                )
+                assert upload.status_code == 200
+
+            uploaded_page = await client.get(f"/runs/{run_id}")
+            assert uploaded_page.status_code == 200
+            assert "sample_dem.tif" in uploaded_page.text
+            assert "sample_overlay.geojson" in uploaded_page.text
+
+            queue = await client.post(f"/dashboard/runs/{run_id}/queue")
+            assert queue.status_code == 200
+
+            worker_result = run_worker_once(app_module.CONFIG, app_module.run_analysis_workflow)
+            assert worker_result["status"] == "completed"
+
+            completed_page = await client.get(f"/runs/{run_id}")
+            assert completed_page.status_code == 200
+            assert "Status: <code>completed</code>" in completed_page.text
+            assert "maps/slope_degrees.tif" in completed_page.text
+            assert "vectors/sample_overlay_clipped.geojson" in completed_page.text
+            assert "renders/terrain_overlay.png" in completed_page.text
+            assert f"/api/runs/{run_id}/outputs/terrain_overlay_png/preview" in completed_page.text
+
+            logout = await client.post("/logout", follow_redirects=False)
+            assert logout.status_code == 303
+
+            blocked = await client.get("/", follow_redirects=False)
+            assert blocked.status_code == 303
+            assert blocked.headers["location"] == "/login?next=/"
+
+    asyncio.run(browser_flow())
 
 
 def test_project_run_upload_analysis_report_and_outputs(app_module):

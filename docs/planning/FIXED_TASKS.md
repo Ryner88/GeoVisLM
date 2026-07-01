@@ -517,7 +517,23 @@ Notes:
 - Result: `20 passed, 11 warnings`.
 - Local HTTP smoke passed.
 - Docker Compose dashboard and worker processed a queued vector+DEM run and exposed registered artifacts through metadata, preview, and download routes.
-- Browser end-to-end workflow testing remains a separate `[TODO]` priority task.
+- Browser end-to-end workflow testing was completed as a separate follow-up priority task.
+
+### `[DONE]` Add Browser End-to-End Workflow Test
+
+Implemented:
+
+- Dashboard run-page upload form for validated input uploads through browser pages.
+- Dashboard form handler that reuses the existing project/run authorization and base64 ingestion path.
+- Browser workflow test covering login, project creation, run creation, DEM/vector upload, queueing, worker completion, output visibility, and logout access blocking.
+
+Verified:
+
+- `timeout 180 .venv/bin/python -m pytest tests/test_dashboard_operational.py::test_browser_end_to_end_workflow_from_login_to_outputs -vv`
+
+Notes:
+
+- Focused E2E result: `1 passed, 2 warnings`.
 
 ### `[DONE]` Add Operational Planning Specs
 

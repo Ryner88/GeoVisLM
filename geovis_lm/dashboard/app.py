@@ -649,6 +649,17 @@ def run_page(run_id: str, request: Request) -> str:
         actions.append(f"<form method='post' action='/dashboard/runs/{run_id}/cancel'><button>Cancel</button></form>")
     if run.get("status") == "failed" and run.get("retryable"):
         actions.append(f"<form method='post' action='/dashboard/runs/{run_id}/retry'><button>Retry</button></form>")
+    upload_form = ""
+    if run.get("status") in {"created", "uploaded", "retrying"}:
+        upload_form = f"""
+    <h2>Upload Input</h2>
+    <form method="post" action="/dashboard/projects/{run['project_id']}/runs/{run_id}/files" class="upload-form">
+      <label>Filename<input name="filename" placeholder="sample_dem.tif" required></label>
+      <label>MIME type<input name="content_type" placeholder="image/tiff"></label>
+      <label>Base64 content<textarea name="content_b64" rows="5" required></textarea></label>
+      <button>Upload input</button>
+    </form>
+"""
     return f"""
 <!doctype html>
 <html lang="en">
@@ -661,6 +672,8 @@ def run_page(run_id: str, request: Request) -> str:
       th, td {{ border-bottom: 1px solid #ddd; padding: .45rem; text-align: left; vertical-align: top; }}
       code {{ background: #f4f4f4; padding: .1rem .3rem; }}
       form {{ display: inline-block; margin-right: .5rem; }}
+      label, input, textarea {{ display: block; width: 100%; box-sizing: border-box; font: inherit; margin: .25rem 0; }}
+      .upload-form {{ display: block; max-width: 42rem; margin: 1rem 0; }}
       img {{ max-width: 320px; max-height: 220px; display: block; margin-top: .5rem; border: 1px solid #ddd; }}
       .checksum {{ max-width: 24rem; overflow-wrap: anywhere; }}
     </style>
@@ -673,6 +686,7 @@ def run_page(run_id: str, request: Request) -> str:
     <p>Updated: {escape(run.get('updated_at') or '')}</p>
     <p>Error: {escape(run.get('error_message') or '')}</p>
     <div>{''.join(actions)}</div>
+    {upload_form}
     <h2>Inputs</h2>
     <table>
       <thead><tr><th>File</th><th>Status</th><th>Type</th><th>Bytes</th><th>Errors</th></tr></thead>
@@ -752,6 +766,29 @@ async def create_run_form(project_id: str, request: Request) -> HTMLResponse:
     assert_project_access(project, principal, "create_run")
     run = create_run_record(CONFIG, project, principal["user_id"], name=form.get("name", ["Terrain Run"])[0])
     return HTMLResponse(f"<meta http-equiv='refresh' content='0; url=/runs/{run['run_id']}'>")
+
+
+@app.post("/dashboard/projects/{project_id}/runs/{run_id}/files")
+async def upload_run_file_form(project_id: str, run_id: str, request: Request) -> HTMLResponse:
+    form = parse_qs((await request.body()).decode("utf-8"))
+    principal = principal_from_request(request, CONFIG)
+    project = get_project(CONFIG, project_id)
+    assert_project_access(project, principal, "upload")
+    run = get_run(CONFIG, run_id)
+    if run["project_id"] != project_id:
+        raise HTTPException(status_code=404, detail="Run not found")
+    ingest_base64_files(
+        CONFIG,
+        run,
+        [
+            {
+                "filename": form.get("filename", [""])[0],
+                "content_b64": form.get("content_b64", [""])[0],
+                "content_type": form.get("content_type", [""])[0] or None,
+            }
+        ],
+    )
+    return HTMLResponse(f"<meta http-equiv='refresh' content='0; url=/runs/{run_id}'>")
 
 
 # Compatibility endpoints retained for the original README curl flow.
