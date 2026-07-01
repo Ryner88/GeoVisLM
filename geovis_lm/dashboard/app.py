@@ -8,8 +8,7 @@ from urllib.parse import parse_qs
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from geovis_lm.dashboard.operations import (
@@ -29,11 +28,13 @@ from geovis_lm.dashboard.operations import (
     ingest_base64_files,
     get_job,
     list_jobs,
+    list_output_artifacts,
     list_projects,
     list_runs,
     list_visible_runs,
+    mime_type_for_path,
     principal_from_request,
-    relative_output_url,
+    registered_output_path,
     run_dir,
     run_metadata_path,
     update_run,
@@ -51,7 +52,6 @@ CONFIG = DashboardConfig.from_env()
 ensure_storage(CONFIG)
 
 app = FastAPI(title="GeoVisLM Dashboard", version="0.2.0")
-app.mount("/outputs", StaticFiles(directory=str(CONFIG.output_root)), name="outputs")
 
 
 @app.exception_handler(HTTPException)
@@ -460,7 +460,7 @@ def generate_report(run_id: str, request: Request) -> dict:
 
     outputs["report_md"] = str(report_path)
     metadata = update_run(CONFIG, run_id, status="reported", status_message="Report generated", outputs=outputs)
-    metadata["report_url"] = relative_output_url(CONFIG, report_path)
+    metadata["report_url"] = f"/api/runs/{run_id}/outputs/report_md/download"
     return metadata
 
 
@@ -489,22 +489,39 @@ def list_outputs(run_id: str, request: Request) -> dict:
     run = get_run(CONFIG, run_id)
     project = project_for_run(run)
     assert_project_access(project, principal, "view")
-    base_dir = run_dir(CONFIG, run_id)
-
-    files = []
-    for path in sorted(base_dir.rglob("*")):
-        if path.is_file():
-            files.append(
-                {
-                    "path": str(path),
-                    "url": relative_output_url(CONFIG, path),
-                    "bytes": path.stat().st_size,
-                    "role": "output"
-                    if {"maps", "reports", "vectors", "renders"} & set(path.parts)
-                    else "input",
-                }
-            )
+    files = list_output_artifacts(CONFIG, run)
     return {"project_id": run["project_id"], "run_id": run_id, "files": files}
+
+
+@app.get("/api/runs/{run_id}/outputs/{output_key:path}/download")
+def download_output(run_id: str, output_key: str, request: Request) -> FileResponse:
+    principal = principal_from_request(request, CONFIG)
+    run = get_run(CONFIG, run_id)
+    project = project_for_run(run)
+    assert_project_access(project, principal, "view")
+    path = registered_output_path(CONFIG, run, output_key)
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Output file missing")
+    return FileResponse(
+        path,
+        media_type=mime_type_for_path(path),
+        filename=path.name,
+        content_disposition_type="attachment",
+    )
+
+
+@app.get("/api/runs/{run_id}/outputs/{output_key:path}/preview")
+def preview_output(run_id: str, output_key: str, request: Request) -> FileResponse:
+    principal = principal_from_request(request, CONFIG)
+    run = get_run(CONFIG, run_id)
+    project = project_for_run(run)
+    assert_project_access(project, principal, "view")
+    path = registered_output_path(CONFIG, run, output_key)
+    if path.suffix.lower() != ".png":
+        raise HTTPException(status_code=400, detail="Only PNG outputs can be previewed")
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Output file missing")
+    return FileResponse(path, media_type="image/png", filename=path.name, content_disposition_type="inline")
 
 
 @app.get("/projects/{project_id}", response_class=HTMLResponse)
@@ -562,11 +579,45 @@ def run_page(run_id: str, request: Request) -> str:
     project = project_for_run(run)
     assert_project_access(project, principal, "view")
     jobs = list_jobs(CONFIG, run_id=run_id)
-    outputs = [
-        f"<li><a href='{relative_output_url(CONFIG, Path(path))}'>{escape(name)}</a> <code>{escape(Path(path).name)}</code></li>"
-        for name, path in run.get("outputs", {}).items()
-        if path
-    ]
+    artifacts = list_output_artifacts(CONFIG, run)
+
+    def artifact_rows(category: str) -> str:
+        rows = []
+        for artifact in artifacts:
+            if artifact["category"] != category:
+                continue
+            checksum = artifact.get("checksum_sha256") or "missing"
+            size = artifact.get("size_bytes")
+            size_label = f"{size:,}" if size is not None else "missing"
+            preview = (
+                f"<a href='{escape(artifact['preview_url'])}'>Preview</a>"
+                if artifact.get("preview_url") and artifact.get("exists")
+                else ""
+            )
+            download = (
+                f"<a href='{escape(artifact['download_url'])}'>Download</a>"
+                if artifact.get("exists")
+                else "<span>Missing file</span>"
+            )
+            preview_image = (
+                f"<div><a href='{escape(artifact['preview_url'])}'>"
+                f"<img src='{escape(artifact['preview_url'])}' alt='{escape(artifact['filename'])}'></a></div>"
+                if category == "render" and artifact.get("preview_url") and artifact.get("exists")
+                else ""
+            )
+            rows.append(
+                "<tr>"
+                f"<td>{escape(artifact['output_type'])}{preview_image}</td>"
+                f"<td><code>{escape(artifact['mime_type'])}</code></td>"
+                f"<td>{size_label}</td>"
+                f"<td><code>{escape(checksum)}</code></td>"
+                f"<td>{escape(artifact['generated_stage'])}</td>"
+                f"<td><code>{escape(artifact['display_filename'])}</code></td>"
+                f"<td>{preview} {download}</td>"
+                "</tr>"
+            )
+        return "".join(rows) or "<tr><td colspan='7'>No outputs in this category</td></tr>"
+
     inputs = [
         "<tr>"
         f"<td>{escape(item.get('original_filename') or item.get('stored_filename') or '')}</td>"
@@ -610,6 +661,8 @@ def run_page(run_id: str, request: Request) -> str:
       th, td {{ border-bottom: 1px solid #ddd; padding: .45rem; text-align: left; vertical-align: top; }}
       code {{ background: #f4f4f4; padding: .1rem .3rem; }}
       form {{ display: inline-block; margin-right: .5rem; }}
+      img {{ max-width: 320px; max-height: 220px; display: block; margin-top: .5rem; border: 1px solid #ddd; }}
+      .checksum {{ max-width: 24rem; overflow-wrap: anywhere; }}
     </style>
   </head>
   <body>
@@ -631,7 +684,26 @@ def run_page(run_id: str, request: Request) -> str:
       <tbody>{''.join(job_rows) or "<tr><td colspan='5'>No jobs yet</td></tr>"}</tbody>
     </table>
     <h2>Outputs</h2>
-    <ul>{''.join(outputs) or '<li>No outputs yet</li>'}</ul>
+    <h3>Raster Outputs</h3>
+    <table>
+      <thead><tr><th>Output</th><th>MIME</th><th>Bytes</th><th>Checksum</th><th>Stage</th><th>File</th><th>Actions</th></tr></thead>
+      <tbody>{artifact_rows("raster")}</tbody>
+    </table>
+    <h3>Vector Outputs</h3>
+    <table>
+      <thead><tr><th>Output</th><th>MIME</th><th>Bytes</th><th>Checksum</th><th>Stage</th><th>File</th><th>Actions</th></tr></thead>
+      <tbody>{artifact_rows("vector")}</tbody>
+    </table>
+    <h3>Render and Preview Outputs</h3>
+    <table>
+      <thead><tr><th>Output</th><th>MIME</th><th>Bytes</th><th>Checksum</th><th>Stage</th><th>File</th><th>Actions</th></tr></thead>
+      <tbody>{artifact_rows("render")}</tbody>
+    </table>
+    <h3>Metadata and Summary Outputs</h3>
+    <table>
+      <thead><tr><th>Output</th><th>MIME</th><th>Bytes</th><th>Checksum</th><th>Stage</th><th>File</th><th>Actions</th></tr></thead>
+      <tbody>{artifact_rows("metadata")}</tbody>
+    </table>
     <h2>History</h2>
     <ul>{history}</ul>
   </body>

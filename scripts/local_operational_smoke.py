@@ -40,6 +40,17 @@ def request(method: str, url: str, data: dict | bytes | None = None, token: str 
         return response.status, response.read().decode("utf-8")
 
 
+def request_bytes(method: str, url: str, token: str | None = None) -> tuple[int, str, bytes]:
+    headers = {}
+    if token:
+        headers["authorization"] = f"Bearer {token}"
+        headers["x-geovis-user"] = "smoke-user"
+        headers["x-geovis-role"] = "owner"
+    req = urllib.request.Request(url, method=method, headers=headers)
+    with urllib.request.urlopen(req, timeout=20) as response:
+        return response.status, response.headers.get("content-type", ""), response.read()
+
+
 def wait_for_ready(base_url: str, timeout_seconds: int) -> None:
     deadline = time.time() + timeout_seconds
     last_error = None
@@ -129,8 +140,19 @@ def main() -> None:
         status, body = request("GET", f"{base_url}/api/runs/{run['run_id']}/outputs", token=token)
         assert status == 200, body
         outputs = json.loads(body)["files"]
-        output_urls = {item["url"] for item in outputs}
-        assert reported["report_url"] in output_urls, output_urls
+        artifacts = {item["id"]: item for item in outputs}
+        assert {"slope", "hillshade", "terrain_risk", "terrain_summary_json", "report_md"} <= set(artifacts), artifacts
+        assert artifacts["slope"]["mime_type"] == "image/tiff", artifacts["slope"]
+        assert artifacts["terrain_summary_json"]["checksum_sha256"], artifacts["terrain_summary_json"]
+        status, content_type, summary_bytes = request_bytes(
+            "GET",
+            f"{base_url}{artifacts['terrain_summary_json']['download_url']}",
+            token=token,
+        )
+        assert status == 200, content_type
+        assert content_type.startswith("application/json"), content_type
+        assert json.loads(summary_bytes.decode("utf-8"))["adapter"] == "dem_terrain"
+        assert reported["outputs"]["report_md"].endswith(artifacts["report_md"]["filename"]), artifacts["report_md"]
 
         print("Local operational smoke test passed.")
         print(f"Base URL: {base_url}")

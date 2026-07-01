@@ -494,6 +494,31 @@ Notes:
 - The project still works in file-only mode when PostGIS is not configured.
 - A real PostGIS connection requires installing the optional `psycopg` package.
 
+### `[DONE]` Add Artifact Preview and Download UX
+
+Implemented:
+
+- Run detail output sections for raster, vector, render/preview, and metadata artifacts.
+- Registered-output artifact metadata with output type, MIME type, byte size, SHA-256 checksum, generated stage, and run-relative display filename.
+- Authenticated download routes for registered GeoTIFF, GeoJSON, PNG, JSON, and Markdown outputs.
+- Authenticated inline preview route for registered PNG render outputs.
+- Path containment and output-id validation so artifact routes only serve files registered on the owning run.
+- README dashboard documentation for previewing and downloading generated artifacts.
+
+Verified:
+
+- `timeout 300 .venv/bin/python -m pytest -vv`
+- `timeout 120 .venv/bin/python scripts/local_operational_smoke.py`
+- `docker compose up --build -d`
+- `docker compose exec -T dashboard python scripts/compose_worker_smoke.py`
+
+Notes:
+
+- Result: `20 passed, 11 warnings`.
+- Local HTTP smoke passed.
+- Docker Compose dashboard and worker processed a queued vector+DEM run and exposed registered artifacts through metadata, preview, and download routes.
+- Browser end-to-end workflow testing remains a separate `[TODO]` priority task.
+
 ### `[DONE]` Add Operational Planning Specs
 
 Implemented:

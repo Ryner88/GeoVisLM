@@ -23,6 +23,17 @@ def request(method: str, base_url: str, path: str, token: str, payload: dict | N
         return json.loads(response.read().decode("utf-8"))
 
 
+def request_bytes(method: str, base_url: str, path: str, token: str) -> tuple[str, bytes]:
+    headers = {
+        "authorization": f"Bearer {token}",
+        "x-geovis-user": "compose-worker-smoke",
+        "x-geovis-role": "owner",
+    }
+    req = urllib.request.Request(base_url + path, headers=headers, method=method)
+    with urllib.request.urlopen(req, timeout=60) as response:
+        return response.headers.get("content-type", ""), response.read()
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Validate dashboard + persistent Compose worker processing.")
     parser.add_argument("--base-url", default="http://dashboard:8000")
@@ -80,11 +91,22 @@ def main() -> None:
     if current["status"] != "completed":
         raise RuntimeError({"run": current, "jobs": jobs})
     outputs = request("GET", args.base_url, f"/api/runs/{run['run_id']}/outputs", args.token)
-    output_names = {Path(item["path"]).name for item in outputs["files"]}
+    artifacts = {item["id"]: item for item in outputs["files"]}
+    output_names = {item["filename"] for item in outputs["files"]}
     required = {"slope_degrees.tif", "hillshade.tif", "terrain_risk.tif", "sample_overlay_clipped.geojson", "terrain_overlay.png"}
     missing = sorted(required - output_names)
     if missing:
         raise RuntimeError({"missing_outputs": missing, "outputs": sorted(output_names)})
+    for output_id in ("slope", "hillshade", "terrain_risk", "vector_overlay_1", "terrain_overlay_png"):
+        artifact = artifacts.get(output_id)
+        if not artifact or not artifact.get("checksum_sha256") or not artifact.get("download_url"):
+            raise RuntimeError({"invalid_artifact": output_id, "artifacts": artifacts})
+    png_type, png_bytes = request_bytes("GET", args.base_url, artifacts["terrain_overlay_png"]["preview_url"], args.token)
+    if png_type != "image/png" or not png_bytes.startswith(b"\x89PNG"):
+        raise RuntimeError({"invalid_preview": png_type})
+    json_type, json_bytes = request_bytes("GET", args.base_url, artifacts["vector_overlay_1"]["download_url"], args.token)
+    if not json_type.startswith("application/geo+json") or not json_bytes:
+        raise RuntimeError({"invalid_geojson_download": json_type})
     if "completed" not in {job["status"] for job in jobs["jobs"]}:
         raise RuntimeError({"jobs": jobs})
 

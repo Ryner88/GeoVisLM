@@ -143,6 +143,26 @@ For a local demo without uploading bytes manually, create a run and call:
 curl -X POST http://127.0.0.1:8000/api/runs/<run_id>/use-sample-dem
 ```
 
+Completed run pages at `/runs/<run_id>` group generated artifacts into raster,
+vector, render/preview, and metadata sections. Each row shows the output type,
+MIME type, byte size, SHA-256 checksum, generated stage, safe run-relative
+filename, and a download action. PNG render outputs also include an inline
+browser preview.
+
+Artifact access is run-scoped and uses registered output ids from the run
+metadata:
+
+```bash
+curl http://127.0.0.1:8000/api/runs/<run_id>/outputs
+curl -OJ http://127.0.0.1:8000/api/runs/<run_id>/outputs/slope/download
+curl -OJ http://127.0.0.1:8000/api/runs/<run_id>/outputs/vector_overlay_1/download
+curl -OJ http://127.0.0.1:8000/api/runs/<run_id>/outputs/terrain_summary_json/download
+curl http://127.0.0.1:8000/api/runs/<run_id>/outputs/terrain_overlay_png/preview
+```
+
+Supported generated downloads include GeoTIFF, GeoJSON, PNG, and JSON outputs.
+Preview is intentionally limited to registered PNG outputs.
+
 Operational settings are environment-driven:
 
 - `GEOVIS_OUTPUT_ROOT`: storage root for projects, runs, uploads, and outputs

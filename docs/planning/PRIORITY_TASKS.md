@@ -9,7 +9,7 @@ Status labels:
 
 ## Current Priority Queue
 
-### 1. `[TODO]` Add Artifact Preview and Download UX
+### 1. `[DONE]` Add Artifact Preview and Download UX
 
 Goal: make generated DEM, vector, and render outputs usable from the dashboard.
 

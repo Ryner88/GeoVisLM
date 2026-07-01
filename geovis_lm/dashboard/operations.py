@@ -5,6 +5,7 @@ import csv
 import hmac
 import hashlib
 import json
+import mimetypes
 import os
 import re
 import secrets
@@ -161,7 +162,7 @@ def job_metadata_path(config: DashboardConfig, job_id: str) -> Path:
 
 
 def create_run_folders(base_dir: Path) -> None:
-    for child in ("inputs/raw", "inputs/validated", "maps", "renders", "reports", "logs"):
+    for child in ("inputs/raw", "inputs/validated", "maps", "vectors", "renders", "reports", "logs"):
         (base_dir / child).mkdir(parents=True, exist_ok=True)
 
 
@@ -453,6 +454,123 @@ def ensure_child_path(root: Path, target: Path) -> Path:
     if not resolved_target.is_relative_to(resolved_root):
         raise HTTPException(status_code=400, detail={"error_code": "unsafe_filename", "error_message": "Path escapes storage root"})
     return resolved_target
+
+
+def checksum_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def mime_type_for_path(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix in {".tif", ".tiff"}:
+        return "image/tiff"
+    if suffix == ".geojson":
+        return "application/geo+json"
+    if suffix == ".json":
+        return "application/json"
+    if suffix == ".png":
+        return "image/png"
+    guessed, _encoding = mimetypes.guess_type(path.name)
+    return guessed or "application/octet-stream"
+
+
+def output_stage(output_key: str) -> str:
+    if output_key in {"slope", "hillshade", "terrain_risk"}:
+        return "terrain_analysis"
+    if output_key.startswith("vector_overlay_"):
+        return "vector_overlay"
+    if output_key.endswith("_png"):
+        return "render_overlay"
+    if output_key.endswith("_json"):
+        return "summary"
+    if output_key.endswith("_md"):
+        return "report"
+    return "output"
+
+
+def output_category(output_key: str, path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix in {".tif", ".tiff"}:
+        return "raster"
+    if suffix == ".geojson" or output_key.startswith("vector_overlay_"):
+        return "vector"
+    if suffix == ".png":
+        return "render"
+    if suffix in {".json", ".md"}:
+        return "metadata"
+    return "other"
+
+
+def output_type_label(output_key: str, path: Path) -> str:
+    labels = {
+        "slope": "slope GeoTIFF",
+        "hillshade": "hillshade GeoTIFF",
+        "terrain_risk": "risk GeoTIFF",
+        "terrain_summary_json": "summary JSON",
+        "terrain_overlay_png": "overlay PNG render",
+        "report_md": "terrain report",
+    }
+    if output_key.startswith("vector_overlay_"):
+        return "clipped vector GeoJSON"
+    return labels.get(output_key, path.suffix.lower().lstrip(".") or "output")
+
+
+def artifact_display_name(config: DashboardConfig, run_id: str, path: Path) -> str:
+    try:
+        return path.resolve().relative_to(run_dir(config, run_id).resolve()).as_posix()
+    except ValueError:
+        return path.name
+
+
+def registered_output_path(config: DashboardConfig, run: dict[str, Any], output_key: str) -> Path:
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", output_key or ""):
+        raise HTTPException(status_code=400, detail="Invalid output key")
+    outputs = run.get("outputs", {})
+    raw_path = outputs.get(output_key)
+    if not raw_path:
+        raise HTTPException(status_code=404, detail="Output not found")
+    path = ensure_child_path(run_dir(config, run["run_id"]), Path(raw_path))
+    if path.suffix.lower() not in {".tif", ".tiff", ".geojson", ".json", ".png", ".md"}:
+        raise HTTPException(status_code=404, detail="Output not found")
+    return path
+
+
+def output_artifact_record(config: DashboardConfig, run: dict[str, Any], output_key: str) -> dict[str, Any]:
+    path = registered_output_path(config, run, output_key)
+    exists = path.exists() and path.is_file()
+    size_bytes = path.stat().st_size if exists else None
+    checksum = checksum_sha256(path) if exists else None
+    return {
+        "id": output_key,
+        "run_id": run["run_id"],
+        "project_id": run["project_id"],
+        "output_type": output_type_label(output_key, path),
+        "category": output_category(output_key, path),
+        "mime_type": mime_type_for_path(path),
+        "size_bytes": size_bytes,
+        "checksum_sha256": checksum,
+        "generated_stage": output_stage(output_key),
+        "filename": path.name,
+        "display_filename": artifact_display_name(config, run["run_id"], path),
+        "exists": exists,
+        "download_url": f"/api/runs/{run['run_id']}/outputs/{output_key}/download",
+        "preview_url": f"/api/runs/{run['run_id']}/outputs/{output_key}/preview"
+        if path.suffix.lower() == ".png"
+        else None,
+    }
+
+
+def list_output_artifacts(config: DashboardConfig, run: dict[str, Any]) -> list[dict[str, Any]]:
+    artifacts = []
+    for output_key, raw_path in sorted(run.get("outputs", {}).items()):
+        if not raw_path:
+            continue
+        artifacts.append(output_artifact_record(config, run, output_key))
+    return artifacts
 
 
 def decode_upload_content(content_b64: str) -> bytes:

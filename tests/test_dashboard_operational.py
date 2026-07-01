@@ -179,20 +179,32 @@ def test_project_run_upload_analysis_report_and_outputs(app_module):
 
     outputs_response = request(app_module.app, "get", f"/api/runs/{run['run_id']}/outputs", headers=auth())
     assert outputs_response.status_code == 200
-    output_names = {Path(item["path"]).name for item in outputs_response.json()["files"]}
+    output_names = {item["filename"] for item in outputs_response.json()["files"]}
     assert {
-        "sample_dem.tif",
         "slope_degrees.tif",
         "hillshade.tif",
         "terrain_risk.tif",
         "terrain_summary.json",
         "terrain_analysis.md",
     } <= output_names
+    slope = next(item for item in outputs_response.json()["files"] if item["id"] == "slope")
+    assert slope["category"] == "raster"
+    assert slope["mime_type"] == "image/tiff"
+    assert slope["size_bytes"] > 0
+    assert slope["checksum_sha256"]
+    assert slope["generated_stage"] == "terrain_analysis"
+    assert slope["display_filename"] == "maps/slope_degrees.tif"
+    assert slope["download_url"] == f"/api/runs/{run['run_id']}/outputs/slope/download"
 
     run_page = request(app_module.app, "get", f"/runs/{run['run_id']}", headers=auth())
     assert run_page.status_code == 200
     assert "Status:" in run_page.text
-    assert "sample_dem.tif" in run_page.text
+    assert "Raster Outputs" in run_page.text
+    assert "Vector Outputs" in run_page.text
+    assert "Render and Preview Outputs" in run_page.text
+    assert "Metadata and Summary Outputs" in run_page.text
+    assert "maps/slope_degrees.tif" in run_page.text
+    assert "reports/terrain_summary.json" in run_page.text
     assert "terrain_analysis.md" in run_page.text
 
 
@@ -287,8 +299,139 @@ def test_project_run_with_vector_overlay_generates_render_outputs(app_module):
     assert "stage=render_overlay" in analyzed["execution_metadata"]["logs"]
 
     outputs_response = request(app_module.app, "get", f"/api/runs/{run['run_id']}/outputs", headers=auth())
-    output_names = {Path(item["path"]).name for item in outputs_response.json()["files"]}
+    output_names = {item["filename"] for item in outputs_response.json()["files"]}
     assert {"sample_overlay_clipped.geojson", "terrain_overlay.png"} <= output_names
+    artifacts = {item["id"]: item for item in outputs_response.json()["files"]}
+    assert artifacts["vector_overlay_1"]["category"] == "vector"
+    assert artifacts["vector_overlay_1"]["mime_type"] == "application/geo+json"
+    assert artifacts["terrain_overlay_png"]["category"] == "render"
+    assert artifacts["terrain_overlay_png"]["mime_type"] == "image/png"
+    assert artifacts["terrain_overlay_png"]["preview_url"] == f"/api/runs/{run['run_id']}/outputs/terrain_overlay_png/preview"
+
+
+def test_output_preview_and_download_routes_for_registered_artifacts(app_module):
+    project, run = create_project_and_run(app_module.app)
+
+    upload_response = request(
+        app_module.app,
+        "post",
+        f"/api/projects/{project['id']}/runs/{run['run_id']}/files",
+        headers=auth(),
+        json={
+            "files": [
+                {
+                    "filename": "sample_dem.tif",
+                    "content_b64": b64(Path("data/sample/sample_dem.tif")),
+                    "content_type": "image/tiff",
+                },
+                {
+                    "filename": "sample_overlay.geojson",
+                    "content_b64": b64(Path("data/sample/sample_overlay.geojson")),
+                    "content_type": "application/geo+json",
+                },
+            ]
+        },
+    )
+    assert upload_response.status_code == 200
+
+    analyzed = request(app_module.app, "post", f"/api/runs/{run['run_id']}/analyze", headers=auth()).json()
+    assert analyzed["status"] == "completed"
+
+    png_preview = request(
+        app_module.app,
+        "get",
+        f"/api/runs/{run['run_id']}/outputs/terrain_overlay_png/preview",
+        headers=auth(),
+    )
+    assert png_preview.status_code == 200
+    assert png_preview.headers["content-type"] == "image/png"
+    assert png_preview.content.startswith(b"\x89PNG")
+
+    downloads = {
+        "terrain_summary_json": "application/json",
+        "vector_overlay_1": "application/geo+json",
+        "slope": "image/tiff",
+    }
+    for output_key, content_type in downloads.items():
+        response = request(
+            app_module.app,
+            "get",
+            f"/api/runs/{run['run_id']}/outputs/{output_key}/download",
+            headers=auth(),
+        )
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith(content_type)
+        assert response.content
+
+    non_png_preview = request(
+        app_module.app,
+        "get",
+        f"/api/runs/{run['run_id']}/outputs/slope/preview",
+        headers=auth(),
+    )
+    assert non_png_preview.status_code == 400
+
+
+def test_output_access_rejects_unauthorized_users(app_module):
+    project, run = create_project_and_run(app_module.app)
+    upload_response = request(
+        app_module.app,
+        "post",
+        f"/api/projects/{project['id']}/runs/{run['run_id']}/files",
+        headers=auth(),
+        json={"files": [{"filename": "sample_dem.tif", "content_b64": b64(Path("data/sample/sample_dem.tif"))}]},
+    )
+    assert upload_response.status_code == 200
+    assert request(app_module.app, "post", f"/api/runs/{run['run_id']}/analyze", headers=auth()).status_code == 200
+
+    response = request(
+        app_module.app,
+        "get",
+        f"/api/runs/{run['run_id']}/outputs/slope/download",
+        headers=auth("user-2", "owner"),
+    )
+
+    assert response.status_code == 403
+
+
+def test_output_routes_handle_missing_files_and_reject_traversal(app_module):
+    project, run = create_project_and_run(app_module.app)
+    upload_response = request(
+        app_module.app,
+        "post",
+        f"/api/projects/{project['id']}/runs/{run['run_id']}/files",
+        headers=auth(),
+        json={"files": [{"filename": "sample_dem.tif", "content_b64": b64(Path("data/sample/sample_dem.tif"))}]},
+    )
+    assert upload_response.status_code == 200
+    analyzed = request(app_module.app, "post", f"/api/runs/{run['run_id']}/analyze", headers=auth()).json()
+    assert analyzed["status"] == "completed"
+
+    Path(analyzed["outputs"]["terrain_summary_json"]).unlink()
+    missing = request(
+        app_module.app,
+        "get",
+        f"/api/runs/{run['run_id']}/outputs/terrain_summary_json/download",
+        headers=auth(),
+    )
+    assert missing.status_code == 404
+    assert missing.json()["detail"] == "Output file missing"
+
+    traversal = request(
+        app_module.app,
+        "get",
+        f"/api/runs/{run['run_id']}/outputs/%2E%2E%2Fmetadata/download",
+        headers=auth(),
+    )
+    assert traversal.status_code == 400
+
+    unregistered = request(
+        app_module.app,
+        "get",
+        f"/api/runs/{run['run_id']}/outputs/metadata/download",
+        headers=auth(),
+    )
+    assert unregistered.status_code == 404
 
 
 def test_queue_creates_durable_job_and_worker_completes_it(app_module):
