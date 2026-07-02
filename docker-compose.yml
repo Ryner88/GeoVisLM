@@ -9,7 +9,7 @@ services:
       GEOVIS_AUTH_TOKEN: ${GEOVIS_AUTH_TOKEN:-change-me-local-token}
       GEOVIS_DATABASE_URL: postgresql://geovis:geovis@db:5432/geovis_lm
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - geovis_outputs:/app/outputs
     depends_on:
