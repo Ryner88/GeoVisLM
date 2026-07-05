@@ -40,7 +40,7 @@ docs/diagrams/images/system_architecture.png
 
 Purpose:
 
-Shows the high-level GeoVisLM architecture: dashboard, GIS engine, ParaView engine, GeoMiniLM, reporting, and storage.
+Shows the current staging deployment topology: Cloudflare ingress, Cloudflare Access protection, Caddy reverse proxy, the localhost-bound dashboard, the worker service, PostGIS, and persistent storage.
 
 ---
 
@@ -60,7 +60,7 @@ docs/diagrams/images/component_diagram.png
 
 Purpose:
 
-Shows the internal software modules and how they communicate.
+Shows the deployed runtime components and their connections for the dashboard, worker, database, storage, and public ingress path.
 
 ---
 

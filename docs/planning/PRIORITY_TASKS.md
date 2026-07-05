@@ -9,7 +9,33 @@ Status labels:
 
 ## Current Priority Queue
 
-### 1. `[TODO]` Add Flood Risk Workflow
+### 1. `[TODO]` Add First-Party Login and Signup for GeoVis LM
+
+Goal: add real application-level authentication so users can sign up, log in, log out, and access only their own dashboard runs, uploads, and outputs. Cloudflare Access should remain useful as an outer staging gate, but GeoVis LM should no longer rely only on that or a shared token.
+
+Scope:
+
+- Add a users table with email, password hash, display name, role, and activation fields.
+- Use a standard password hashing library and never store plaintext passwords.
+- Add secure session-based authentication with HTTP-only cookies and a configurable session secret.
+- Add signup, login, logout, and protected route handling.
+- Add optional invite-code-based signup controls for staging.
+- Associate runs, uploads, and outputs with the authenticated user.
+- Add tests for signup, login, logout, unauthorized access, and per-user isolation.
+- Update deployment docs and environment examples with auth settings.
+
+Acceptance criteria:
+
+- A new user can sign up when signup is enabled.
+- Signup can be restricted by invite code.
+- A user can log in and log out successfully.
+- Dashboard and API routes are protected for unauthenticated users.
+- Runs, uploads, and outputs are associated with the logged-in user.
+- Users cannot access another user’s outputs or runs.
+- Passwords are securely hashed and not exposed.
+- Environment documentation lists the auth-related settings and secret rotation guidance.
+
+### 2. `[TODO]` Add Flood Risk Workflow
 
 Goal: combine DEM-derived terrain outputs, river proximity, slope, and optional building footprint overlays into a basic flood-risk analysis workflow.
 
@@ -23,7 +49,7 @@ Acceptance criteria:
 - Workflow works without dashboard or PostGIS.
 - README or workflow documentation explains input requirements and limitations.
 
-### 2. `[TODO]` Add Wildfire Risk Workflow
+### 3. `[TODO]` Add Wildfire Risk Workflow
 
 Goal: combine slope, vegetation/fuel data, optional wind or sensor inputs, and proximity layers into a basic wildfire-risk analysis workflow.
 

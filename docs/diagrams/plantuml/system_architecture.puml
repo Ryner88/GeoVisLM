@@ -1,36 +1,26 @@
 @startuml
-title GeoVisLM System Architecture
+title GeoVisLM Staging Deployment Architecture
 
 skinparam componentStyle rectangle
 skinparam shadowing false
 
 actor User
+cloud "Cloudflare" as Cloudflare
+component "Cloudflare Access\nProtected Staging" as Access
+component "Caddy\nReverse Proxy" as Caddy
+component "Dashboard\nFastAPI / Future UI\n127.0.0.1:8000" as Dashboard
+component "Worker\nBackground Jobs" as Worker
+database "PostGIS\nMetadata & Run State" as Database
+storage "Persistent Storage\nOutputs / Models / Media" as Storage
 
-package "GeoVisLM" {
-  component "Web Dashboard\nFastAPI / Future UI" as Dashboard
-  component "CLI Runner\nTyper Scripts" as CLI
-  component "GIS Engine\nRasterio / GeoPandas / GDAL" as GIS
-  component "QGIS Workflow Layer\nPyQGIS Future" as QGIS
-  component "Scientific Visualization Engine\nParaView / VTK" as ParaView
-  component "GeoMiniLM\nDomain-Specific LLM" as LLM
-  component "Report Generator\nMarkdown / PDF" as Reports
-  database "Project Storage\nData / Outputs / Models" as Storage
-}
-
-User --> Dashboard
-User --> CLI
-
-Dashboard --> GIS
-CLI --> GIS
-
-GIS --> Storage
-GIS --> QGIS
-GIS --> ParaView
-GIS --> LLM
-
-LLM --> Reports
-QGIS --> Reports
-ParaView --> Reports
-Reports --> Storage
+User --> Cloudflare
+Cloudflare --> Access
+Access --> Caddy
+Caddy --> Dashboard
+Dashboard --> Worker
+Dashboard --> Database
+Worker --> Database
+Dashboard --> Storage
+Worker --> Storage
 
 @enduml
