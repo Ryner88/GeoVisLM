@@ -18,6 +18,12 @@ import os
 import sys
 import time
 
+from staging_helpers import (
+    https_check,
+    normalize_staging_target,
+    print_cloudflare_access_heuristics,
+)
+
 try:
     from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 except Exception:
@@ -84,7 +90,7 @@ def click_selector(page, selectors):
 
 def main():
     args = parse_args()
-    domain = get_domain(args.domain)
+    target = normalize_staging_target(get_domain(args.domain))
     cf_user = os.environ.get("CF_USER") or os.environ.get("CF_USERNAME")
     cf_pass = os.environ.get("CF_PASS") or os.environ.get("CF_PASSWORD")
 
@@ -92,13 +98,18 @@ def main():
         print("Missing Cloudflare Access credentials. Set CF_USER and CF_PASS environment variables.")
         sys.exit(2)
 
-    print("Starting headless browser for:", domain)
+    print("\n--- External HTTPS check ---")
+    code, headers, body = https_check(target)
+    print("\n--- Heuristic: Cloudflare Access detection ---")
+    print_cloudflare_access_heuristics(headers, body)
+
+    print("Starting headless browser for:", target.url)
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context()  # no storage
         page = context.new_page()
         try:
-            page.goto(domain, wait_until="networkidle", timeout=30000)
+            page.goto(target.url, wait_until="networkidle", timeout=30000)
         except PlaywrightTimeout:
             print("Initial navigation timed out")
 

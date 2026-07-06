@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Minimal runbook for redeploying GeoVis LM on the VPS
-# Usage: sudo ./deploy_runbook.sh [--no-cache|--cache]
+# Usage: sudo ./deploy_runbook.sh [--no-cache|--cache] [--remote REMOTE] [--branch BRANCH]
 
 set -euo pipefail
 
@@ -8,6 +8,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 NO_CACHE="${NO_CACHE:-0}"
+GIT_REMOTE="${GIT_REMOTE:-origin}"
+GIT_BRANCH="${GIT_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
 if [[ "$NO_CACHE" =~ ^(1|true|yes)$ ]]; then
   NO_CACHE=1
 else
@@ -24,8 +26,16 @@ while [[ $# -gt 0 ]]; do
       NO_CACHE=0
       shift
       ;;
+    --remote)
+      GIT_REMOTE="${2:?Missing value for --remote}"
+      shift 2
+      ;;
+    --branch)
+      GIT_BRANCH="${2:?Missing value for --branch}"
+      shift 2
+      ;;
     -h|--help)
-      echo "Usage: sudo ./deploy_runbook.sh [--no-cache|--cache]"
+      echo "Usage: sudo ./deploy_runbook.sh [--no-cache|--cache] [--remote REMOTE] [--branch BRANCH]"
       exit 0
       ;;
     *)
@@ -35,8 +45,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-echo "Pull latest code and update"
-git pull origin main
+echo "Pull latest code and update from ${GIT_REMOTE}/${GIT_BRANCH}"
+git pull "$GIT_REMOTE" "$GIT_BRANCH"
 
 echo "Ensure .env exists (copy example if missing)"
 if [ ! -f .env ]; then

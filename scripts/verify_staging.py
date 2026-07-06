@@ -10,9 +10,14 @@ import argparse
 import os
 import socket
 import subprocess
-import sys
 
 import requests
+
+from staging_helpers import (
+    https_check,
+    normalize_staging_target,
+    print_cloudflare_access_heuristics,
+)
 
 
 def parse_args():
@@ -36,39 +41,28 @@ def get_domain(cli_domain):
     return cli_domain or os.environ.get("VERIFY_DOMAIN") or os.environ.get("DOMAIN") or "geovis.nextgenbytes.me"
 
 
-def run(cmd):
+def run_curl(args):
+    for arg in args:
+        if not isinstance(arg, str) or "\x00" in arg:
+            raise ValueError("invalid curl argument")
+    cmd = ["curl", *args]
     try:
+        # shell=False and the fixed executable keep user-controlled host/IP values as argv,
+        # not shell syntax. Arguments are assembled only by this script.
         r = subprocess.run(cmd, shell=False, check=False, capture_output=True, text=True, timeout=15)
         return r.returncode, r.stdout + r.stderr
     except Exception as e:
         return 1, str(e)
 
 
-def resolve(domain):
+def resolve(host):
     try:
-        addrs = socket.getaddrinfo(domain, None)
+        addrs = socket.getaddrinfo(host, None)
         ips = sorted({ai[4][0] for ai in addrs})
         return ips
     except Exception as e:
         print(f"DNS resolution failed: {e}")
         return []
-
-
-def https_check(domain):
-    print(f"Checking HTTPS GET {domain}")
-    try:
-        r = requests.get(f"https://{domain}", timeout=10)
-        print(f"Status: {r.status_code}")
-        print("Server:", r.headers.get("server"))
-        print("Via:", r.headers.get("via"))
-        body = r.text[:400]
-        print("Body preview:", body.replace("\n", " "))
-        return r.status_code, r.headers, r.text
-    except requests.exceptions.SSLError as e:
-        print("SSL error when connecting (expected if using origin cert locally):", e)
-    except Exception as e:
-        print("HTTPS request failed:", e)
-    return None, None, None
 
 
 def format_host(host):
@@ -77,31 +71,29 @@ def format_host(host):
     return host
 
 
-def curl_resolve_check(domain, ip):
+def curl_resolve_check(target, ip):
     print(f"Curl with --resolve to {ip} (HTTPS)")
-    cmd = ["curl", "-I", "-k", "--resolve", f"{domain}:443:{ip}", f"https://{domain}", "-m", "10"]
-    return run(cmd)
+    return run_curl(["-I", "-k", "--resolve", f"{target.host}:{target.port}:{ip}", target.url, "-m", "10"])
 
 
 def ip_port_check(ip, port):
     print(f"Checking {ip}:{port}")
     url = f"http://{format_host(ip)}:{port}"
-    cmd = ["curl", "-I", "--max-time", "5", url, "-sS"]
-    return run(cmd)
+    return run_curl(["-I", "--max-time", "5", url, "-sS"])
 
 
 def main():
     args = parse_args()
-    domain = get_domain(args.domain_flag or args.domain)
+    target = normalize_staging_target(get_domain(args.domain_flag or args.domain))
 
-    ips = resolve(domain)
+    ips = resolve(target.host)
     print("Resolved IPs:", ips)
     print("\n--- External HTTPS check ---")
-    https_check(domain)
+    https_check(target)
 
     print("\n--- Per-IP HTTPS via --resolve ---")
     for ip in ips:
-        code, out = curl_resolve_check(domain, ip)
+        code, out = curl_resolve_check(target, ip)
         print(out)
 
     print("\n--- Check port 8000 on resolved IPs (should be refused externally) ---")
@@ -120,18 +112,10 @@ def main():
         print(out)
 
     print("\n--- Heuristic: Cloudflare Access detection ---")
-    # Look for signs of Access in headers or body
-    code, headers, body = https_check(domain)
-    if headers:
-        loc = headers.get("location", "")
-        if "cloudflare" in loc.lower() or "access" in loc.lower():
-            print("Redirects to Cloudflare Access login (heuristic)")
-        if headers.get("server", "").lower().find("cloudflare") != -1:
-            print("Server header is Cloudflare (expected)")
-    if body and ("Cloudflare" in body or "Access" in body or "access" in body.lower()):
-        print("Found Cloudflare/Access text in body (heuristic)")
+    code, headers, body = https_check(target)
+    print_cloudflare_access_heuristics(headers, body)
 
-    print("\nDone. For interactive Access login verification, open https://" + domain)
+    print("\nDone. For interactive Access login verification, open " + target.url)
 
 
 if __name__ == "__main__":
