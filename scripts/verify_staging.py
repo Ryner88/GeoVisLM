@@ -9,7 +9,8 @@ and whether the app port 8000 is reachable externally (it should NOT be).
 import argparse
 import os
 import socket
-import subprocess
+import ssl
+from urllib.parse import urlsplit
 
 import requests
 
@@ -41,20 +42,6 @@ def get_domain(cli_domain):
     return cli_domain or os.environ.get("VERIFY_DOMAIN") or os.environ.get("DOMAIN") or "geovis.nextgenbytes.me"
 
 
-def run_curl(args):
-    for arg in args:
-        if not isinstance(arg, str) or "\x00" in arg:
-            raise ValueError("invalid curl argument")
-    cmd = ["curl", *args]
-    try:
-        # shell=False and the fixed executable keep user-controlled host/IP values as argv,
-        # not shell syntax. Arguments are assembled only by this script.
-        r = subprocess.run(cmd, shell=False, check=False, capture_output=True, text=True, timeout=15)
-        return r.returncode, r.stdout + r.stderr
-    except Exception as e:
-        return 1, str(e)
-
-
 def resolve(host):
     try:
         addrs = socket.getaddrinfo(host, None)
@@ -71,15 +58,38 @@ def format_host(host):
     return host
 
 
-def curl_resolve_check(target, ip):
-    print(f"Curl with --resolve to {ip} (HTTPS)")
-    return run_curl(["-I", "-k", "--resolve", f"{target.host}:{target.port}:{ip}", target.url, "-m", "10"])
+def https_ip_check(target, ip):
+    print(f"HTTPS HEAD to {ip} with SNI {target.host}")
+    parsed = urlsplit(target.url)
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+    request = (
+        f"HEAD {path} HTTP/1.1\r\n"
+        f"Host: {parsed.netloc}\r\n"
+        "User-Agent: geovis-staging-verify/1.0\r\n"
+        "Connection: close\r\n\r\n"
+    )
+
+    try:
+        context = ssl.create_default_context()
+        with socket.create_connection((ip, target.port), timeout=10) as sock:
+            with context.wrap_socket(sock, server_hostname=target.host) as tls_sock:
+                tls_sock.settimeout(10)
+                tls_sock.sendall(request.encode("ascii"))
+                response = tls_sock.recv(2048).decode("iso-8859-1", errors="replace")
+        return 0, response
+    except Exception as e:
+        return 1, str(e)
 
 
 def ip_port_check(ip, port):
     print(f"Checking {ip}:{port}")
-    url = f"http://{format_host(ip)}:{port}"
-    return run_curl(["-I", "--max-time", "5", url, "-sS"])
+    try:
+        with socket.create_connection((ip, port), timeout=5):
+            return 0, f"{format_host(ip)}:{port} is reachable"
+    except Exception as e:
+        return 1, str(e)
 
 
 def main():
@@ -93,7 +103,7 @@ def main():
 
     print("\n--- Per-IP HTTPS via --resolve ---")
     for ip in ips:
-        code, out = curl_resolve_check(target, ip)
+        code, out = https_ip_check(target, ip)
         print(out)
 
     print("\n--- Check port 8000 on resolved IPs (should be refused externally) ---")
