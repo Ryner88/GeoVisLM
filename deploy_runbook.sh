@@ -1,9 +1,39 @@
 #!/usr/bin/env bash
 # Minimal runbook for redeploying GeoVis LM on the VPS
-# Usage: sudo ./deploy_runbook.sh
+# Usage: sudo ./deploy_runbook.sh [--no-cache|--cache]
 
 set -euo pipefail
-cd "$(dirname "$0")/.."
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+NO_CACHE="${NO_CACHE:-0}"
+if [[ "$NO_CACHE" =~ ^(1|true|yes)$ ]]; then
+  NO_CACHE=1
+else
+  NO_CACHE=0
+fi
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --no-cache)
+      NO_CACHE=1
+      shift
+      ;;
+    --cache)
+      NO_CACHE=0
+      shift
+      ;;
+    -h|--help)
+      echo "Usage: sudo ./deploy_runbook.sh [--no-cache|--cache]"
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      exit 2
+      ;;
+  esac
+done
 
 echo "Pull latest code and update"
 git pull origin main
@@ -17,7 +47,11 @@ fi
 
 echo "Build and start stack"
 docker-compose down
-docker-compose build --no-cache
+if [ "$NO_CACHE" -eq 1 ]; then
+  docker-compose build --no-cache
+else
+  docker-compose build
+fi
 docker-compose up -d
 
 echo "Run validations"
