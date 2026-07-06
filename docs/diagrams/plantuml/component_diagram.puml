@@ -1,53 +1,31 @@
 @startuml
-title GeoVisLM Component Diagram
+title GeoVisLM Deployment Components
 
 skinparam componentStyle rectangle
 skinparam shadowing false
 
-package "geovis_lm" {
-  package "gis" {
-    component "terrain.py" as Terrain
-    component "vector.py\nFuture" as Vector
-    component "qgis_workflows.py\nFuture" as QGISWorkflows
-  }
-
-  package "viz" {
-    component "paraview_scene.py\nFuture" as ParaScene
-    component "vtk_export.py\nFuture" as VTKExport
-  }
-
-  package "llm" {
-    component "dataset_builder.py\nFuture" as DatasetBuilder
-    component "tokenizer_train.py\nFuture" as TokenizerTrain
-    component "workflow_generator.py\nFuture" as WorkflowGenerator
-  }
-
-  package "reporting" {
-    component "markdown_report.py\nFuture" as MarkdownReport
-    component "pdf_report.py\nFuture" as PDFReport
-  }
+package "Ingress" {
+  actor "Browser User" as User
+  component "Cloudflare" as Cloudflare
+  component "Cloudflare Access" as Access
+  component "Caddy" as Caddy
 }
 
-component "scripts/run_terrain_analysis.py" as TerrainCLI
-database "data/raw" as RawData
-database "data/processed" as ProcessedData
-database "outputs/maps" as MapOutputs
-database "outputs/renders" as RenderOutputs
-database "outputs/reports" as ReportOutputs
+package "Docker Compose Stack" {
+  component "Dashboard API" as Dashboard
+  component "Worker Service" as Worker
+  database "PostGIS" as Database
+  folder "Persistent Storage" as Storage
+}
 
-TerrainCLI --> Terrain
-RawData --> Terrain
-Terrain --> ProcessedData
-Terrain --> MapOutputs
-
-Terrain --> ParaScene
-ParaScene --> RenderOutputs
-
-WorkflowGenerator --> Terrain
-WorkflowGenerator --> ParaScene
-DatasetBuilder --> WorkflowGenerator
-
-MarkdownReport --> ReportOutputs
-PDFReport --> ReportOutputs
+User --> Cloudflare
+Cloudflare --> Access
+Access --> Caddy
+Caddy --> Dashboard
+Dashboard --> Worker
+Dashboard --> Database
+Worker --> Database
+Dashboard --> Storage
+Worker --> Storage
 
 @enduml
