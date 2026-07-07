@@ -82,6 +82,7 @@ class DashboardConfig:
     max_batch_files: int
     require_auth: bool
     auth_token: str | None
+    session_cookie_secure: bool
     database_url: str | None
 
     @classmethod
@@ -96,6 +97,7 @@ class DashboardConfig:
             max_batch_files=env_int("GEOVIS_MAX_BATCH_FILES", 50),
             require_auth=env_bool("GEOVIS_REQUIRE_AUTH", False),
             auth_token=os.getenv("GEOVIS_AUTH_TOKEN"),
+            session_cookie_secure=env_bool("GEOVIS_SESSION_COOKIE_SECURE", True),
             database_url=os.getenv("GEOVIS_DATABASE_URL"),
         )
 

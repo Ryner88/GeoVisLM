@@ -6,8 +6,9 @@ services:
     environment:
       GEOVIS_OUTPUT_ROOT: /app/outputs
       GEOVIS_REQUIRE_AUTH: "true"
-      GEOVIS_AUTH_TOKEN: ${GEOVIS_AUTH_TOKEN:-change-me-local-token}
-      GEOVIS_DATABASE_URL: postgresql://geovis:geovis@db:5432/geovis_lm
+      GEOVIS_AUTH_TOKEN: ${GEOVIS_AUTH_TOKEN:?set GEOVIS_AUTH_TOKEN}
+      GEOVIS_SESSION_COOKIE_SECURE: ${GEOVIS_SESSION_COOKIE_SECURE:-true}
+      GEOVIS_DATABASE_URL: postgresql://geovis:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/geovis_lm
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
@@ -29,8 +30,9 @@ services:
     environment:
       GEOVIS_OUTPUT_ROOT: /app/outputs
       GEOVIS_REQUIRE_AUTH: "true"
-      GEOVIS_AUTH_TOKEN: ${GEOVIS_AUTH_TOKEN:-change-me-local-token}
-      GEOVIS_DATABASE_URL: postgresql://geovis:geovis@db:5432/geovis_lm
+      GEOVIS_AUTH_TOKEN: ${GEOVIS_AUTH_TOKEN:?set GEOVIS_AUTH_TOKEN}
+      GEOVIS_SESSION_COOKIE_SECURE: ${GEOVIS_SESSION_COOKIE_SECURE:-true}
+      GEOVIS_DATABASE_URL: postgresql://geovis:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/geovis_lm
     volumes:
       - geovis_outputs:/app/outputs
     depends_on:
@@ -49,7 +51,7 @@ services:
     environment:
       POSTGRES_DB: geovis_lm
       POSTGRES_USER: geovis
-      POSTGRES_PASSWORD: geovis
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
     volumes:
       - geovis_postgis:/var/lib/postgresql/data
     healthcheck:

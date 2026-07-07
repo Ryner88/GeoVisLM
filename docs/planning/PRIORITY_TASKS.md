@@ -9,32 +9,7 @@ Status labels:
 
 ## Current Priority Queue
 
-### 1. `[TODO]` Fix Deployment Security Findings
-
-Goal: address the current deployment security findings with minimal code changes.
-
-Scope:
-
-- Remove production-capable default secrets from `docker-compose.yml`:
-  - require `GEOVIS_AUTH_TOKEN` instead of falling back to `change-me-local-token`
-  - move `POSTGRES_PASSWORD` to an environment variable instead of hard-coding `geovis`
-- Mark dashboard session cookies `Secure` for HTTPS deployments, with a local-development override if needed.
-- Harden dynamic Python subprocess usage in `scripts/validate_docker_deployment.py` by validating or whitelisting the Docker executable path.
-- Confirm `scripts/local_operational_smoke.py` remains safe with fixed argv execution and no shell usage.
-- Avoid `shell=True`; use fixed executables with argument lists and `shell=False`.
-- Confirm `requirements.txt` keeps PyTorch pinned to a non-vulnerable version and compatible dependency pins.
-
-Acceptance criteria:
-
-- Docker Compose fails fast when required secrets are missing.
-- No known default auth token or database password is usable in deployment mode.
-- Session cookies are sent with `HttpOnly`, `SameSite`, and `Secure` attributes in HTTPS deployments.
-- No command-injection finding remains for the Docker validation subprocess location.
-- The deployment validation and local smoke scripts still run their existing checks.
-- PyTorch dependency findings are resolved or documented with the selected safe pin.
-- Relevant smoke, compile, or dependency-resolution checks pass.
-
-### 2. `[TODO]` Add First-Party Login and Signup for GeoVis LM
+### 1. `[TODO]` Add First-Party Login and Signup for GeoVis LM
 
 Goal: add real application-level authentication so users can sign up, log in, log out, and access only their own dashboard runs, uploads, and outputs. Cloudflare Access should remain useful as an outer staging gate, but GeoVis LM should no longer rely only on that or a shared token.
 
@@ -60,7 +35,7 @@ Acceptance criteria:
 - Passwords are securely hashed and not exposed.
 - Environment documentation lists the auth-related settings and secret rotation guidance.
 
-### 3. `[TODO]` Add Flood Risk Workflow
+### 2. `[TODO]` Add Flood Risk Workflow
 
 Goal: combine DEM-derived terrain outputs, river proximity, slope, and optional building footprint overlays into a basic flood-risk analysis workflow.
 
@@ -74,7 +49,7 @@ Acceptance criteria:
 - Workflow works without dashboard or PostGIS.
 - README or workflow documentation explains input requirements and limitations.
 
-### 4. `[TODO]` Add Wildfire Risk Workflow
+### 3. `[TODO]` Add Wildfire Risk Workflow
 
 Goal: combine slope, vegetation/fuel data, optional wind or sensor inputs, and proximity layers into a basic wildfire-risk analysis workflow.
 

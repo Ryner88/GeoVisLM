@@ -132,7 +132,13 @@ async def login(request: Request) -> RedirectResponse:
         form.get("role", ["owner"])[0] or "owner",
     )
     response = RedirectResponse(next_url, status_code=303)
-    response.set_cookie(DASHBOARD_SESSION_COOKIE, session, httponly=True, samesite="lax")
+    response.set_cookie(
+        DASHBOARD_SESSION_COOKIE,
+        session,
+        httponly=True,
+        secure=CONFIG.session_cookie_secure,
+        samesite="lax",
+    )
     return response
 
 

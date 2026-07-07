@@ -17,6 +17,7 @@ def app_module(tmp_path, monkeypatch):
     monkeypatch.setenv("GEOVIS_OUTPUT_ROOT", str(tmp_path / "outputs"))
     monkeypatch.setenv("GEOVIS_REQUIRE_AUTH", "true")
     monkeypatch.setenv("GEOVIS_AUTH_TOKEN", "test-token")
+    monkeypatch.setenv("GEOVIS_SESSION_COOKIE_SECURE", "false")
     monkeypatch.setenv("GEOVIS_MAX_UPLOAD_FILE_MB", "1")
     monkeypatch.setenv("GEOVIS_MAX_UPLOAD_BATCH_MB", "2")
     monkeypatch.setenv("GEOVIS_MAX_BATCH_FILES", "4")
