@@ -1,5 +1,6 @@
 services:
   dashboard:
+    image: geovis_lm_app:latest
     build: .
     env_file:
       - .env
@@ -23,7 +24,7 @@ services:
       retries: 3
 
   worker:
-    build: .
+    image: geovis_lm_app:latest
     command: ["python", "scripts/run_worker_once.py", "--loop", "--poll-interval", "2"]
     env_file:
       - .env

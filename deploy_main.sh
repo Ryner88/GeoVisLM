@@ -7,6 +7,7 @@ cd "$repo_root"
 source_branch="${1:-appAuth}"
 target_branch="${2:-main}"
 website_command="${GEOVIS_DEPLOY_WEBSITE_COMMAND:-}"
+local_deploy_command="${GEOVIS_DEPLOY_LOCAL_COMMAND:-sudo ./deploy_runbook.sh --skip-pull --cache}"
 verify_command="${GEOVIS_DEPLOY_VERIFY_COMMAND:-curl -fsS https://geovis.nextgenbytes.me/readyz}"
 
 if ! git rev-parse --verify "$source_branch" >/dev/null 2>&1; then
@@ -25,6 +26,13 @@ if [[ -n "$website_command" ]]; then
   echo
 else
   echo "No website deployment command configured. Set GEOVIS_DEPLOY_WEBSITE_COMMAND to trigger an external deploy."
+fi
+
+if [[ -n "$local_deploy_command" ]]; then
+  echo "Running local deployment command..."
+  eval "$local_deploy_command"
+else
+  echo "No local deployment command configured. Set GEOVIS_DEPLOY_LOCAL_COMMAND to enable it."
 fi
 
 if [[ -n "$verify_command" ]]; then
