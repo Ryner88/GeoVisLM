@@ -145,7 +145,12 @@ async def login(request: Request) -> RedirectResponse:
 @app.post("/logout")
 def logout() -> RedirectResponse:
     response = RedirectResponse("/login", status_code=303)
-    response.delete_cookie(DASHBOARD_SESSION_COOKIE)
+    response.delete_cookie(
+        DASHBOARD_SESSION_COOKIE,
+        httponly=True,
+        secure=CONFIG.session_cookie_secure,
+        samesite="lax",
+    )
     return response
 
 
