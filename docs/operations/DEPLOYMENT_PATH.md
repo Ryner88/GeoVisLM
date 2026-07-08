@@ -75,7 +75,11 @@ Implemented settings:
 
 - `GEOVIS_OUTPUT_ROOT`: root path for persistent local file storage
 - `GEOVIS_DATABASE_URL`: optional PostgreSQL/PostGIS connection URL
-- `GEOVIS_REQUIRE_AUTH`: requires `x-geovis-user` identity headers when true
+- `GEOVIS_REQUIRE_AUTH`: requires a first-party browser session or bearer token when true
+- `GEOVIS_SESSION_SECRET`: high-entropy secret for signing dashboard sessions
+- `GEOVIS_SIGNUP_ENABLED`: enables first-party account creation
+- `GEOVIS_SIGNUP_INVITE_CODE`: optional invite gate for account creation
+- `GEOVIS_AUTH_TOKEN`: optional bearer token for API/service authentication
 - `GEOVIS_MAX_UPLOAD_FILE_MB`
 - `GEOVIS_MAX_UPLOAD_BATCH_MB`
 - `GEOVIS_MAX_BATCH_FILES`
@@ -83,12 +87,13 @@ Implemented settings:
 Additional recommended production settings:
 
 - `GEOVIS_ENV`: `development`, `staging`, or `production`
-- `GEOVIS_SECRET_KEY`: secret used for sessions, tokens, or signing
+- `GEOVIS_SECRET_KEY`: fallback secret for sessions or signing when `GEOVIS_SESSION_SECRET` is not set
 - `GEOVIS_BASE_URL`: external base URL for generated links
 
 Auth and permissions:
 
-- `GEOVIS_AUTH_PROVIDER`
+- First-party signup/login uses Argon2 password hashes and HTTP-only signed session cookies.
+- Rotate `GEOVIS_SESSION_SECRET` by deploying a new high-entropy value; existing browser sessions will need to log in again.
 - `GEOVIS_ADMIN_EMAILS`
 
 Runtime:

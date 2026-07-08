@@ -17,6 +17,21 @@ The project remains usable in file-only mode when this variable is absent.
 
 ## Tables
 
+### `geovis_users`
+
+Stores first-party login accounts.
+
+- `id`: user UUID
+- `email`: normalized unique email address
+- `password_hash`: Argon2 password hash; plaintext passwords are never stored
+- `display_name`: user-facing name
+- `role`: default application role
+- `active`: whether the account can authenticate
+- `activation_token_hash`, `activated_at`: activation metadata
+- `last_login_at`: most recent successful login timestamp, when recorded
+- `metadata`: JSONB metadata
+- `created_at`, `updated_at`: timestamps
+
 ### `geovis_projects`
 
 Stores one project ownership boundary.
