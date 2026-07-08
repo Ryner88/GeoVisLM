@@ -8,6 +8,88 @@ Status labels:
 
 ## Completed Work
 
+### `[DONE]` Deployment Security Hardening
+
+Finished the deployment security hardening work and validated it against the live VPS deployment.
+
+Implemented:
+
+- Compose now requires `GEOVIS_AUTH_TOKEN` when auth is enabled.
+- Compose now requires a GeoVis-specific `POSTGRES_PASSWORD` for the `geovis` database role.
+- HTTPS session cookies default to secure mode with `GEOVIS_SESSION_COOKIE_SECURE=true`.
+- Docker deployment validation checks for required auth and database secret wiring.
+- Docker validation subprocess execution is constrained to trusted Docker executable paths.
+- VPS deployment helpers generate missing `GEOVIS_AUTH_TOKEN` and `POSTGRES_PASSWORD` values instead of relying on defaults.
+
+Verified:
+
+- Public `/readyz` reports `auth_required=true` and `auth_configured=true`.
+- Public login renders the first-party auth UI.
+- The PostGIS `geovis` role password was rotated to the current `.env` secret.
+- Dashboard and worker containers were restarted after secret rotation.
+- The remaining deployment risk is isolated to legacy Compose v1 container recreation and is tracked in the active priority queue.
+
+### `[DONE]` Add First-Party Login and Signup for GeoVis LM
+
+Implemented first-party authentication for the FastAPI dashboard while keeping bearer-token API authentication available for service clients.
+
+Implemented:
+
+- File-backed first-party users with normalized email addresses, Argon2 password hashes, display names, roles, active flags, and activation metadata.
+- A `geovis_users` PostGIS schema table for database-backed deployments.
+- `/signup`, `/login`, `/logout`, `/api/auth/signup`, `/api/auth/login`, and `/api/auth/me`.
+- Signed HTTP-only session cookies using `GEOVIS_SESSION_SECRET` with `GEOVIS_SECRET_KEY` and `GEOVIS_AUTH_TOKEN` fallback compatibility.
+- `GEOVIS_SIGNUP_ENABLED` and `GEOVIS_SIGNUP_INVITE_CODE` controls.
+- Tests for signup, invite-code gating, login, logout, protected routes, and per-user project isolation.
+- README and deployment/storage docs updates for auth settings and session-secret rotation guidance.
+
+Verified:
+
+- A user can sign up when signup is enabled.
+- Signup can be restricted by invite code.
+- A user can log in and log out successfully.
+- Dashboard and API routes are protected for unauthenticated users.
+- Runs, uploads, and outputs are associated with the logged-in user.
+- Users cannot access another user’s outputs or runs.
+- Passwords are securely hashed and not exposed.
+
+### `[DONE]` Add Flood Risk Workflow
+
+Implemented:
+
+- Filesystem-first flood-risk workflow combining DEM-derived low elevation, flat terrain, and river-buffer proximity into `flood_risk.tif`.
+- River buffers generated as `river_buffers.geojson`.
+- JSON summary with output classes, model weights, inputs, outputs, and limitations.
+- Dashboard adapter support for `workflow_type=flood_risk` while keeping the workflow runnable from `scripts/run_flood_risk.py`.
+- Input requirements, output classes, and limitations in `docs/RISK_WORKFLOWS.md`.
+
+Verified:
+
+- Workflow loads a DEM and river or stream vector layer.
+- River buffers are generated.
+- DEM/slope-derived terrain risk is combined with river proximity.
+- Flood-risk output is written to a run-scoped output folder.
+- Workflow works without dashboard or PostGIS.
+
+### `[DONE]` Add Wildfire Risk Workflow
+
+Implemented:
+
+- Filesystem-first wildfire-risk workflow combining DEM-derived slope, normalized vegetation/fuel inputs, and optional proximity vectors into `wildfire_risk.tif`.
+- Numeric and common text fuel classes normalized into stable low, moderate, and high risk inputs.
+- Fuel rasters reprojected to the DEM grid.
+- JSON summary with output classes, normalized fuel metadata, inputs, outputs, and limitations.
+- Dashboard adapter support for `workflow_type=wildfire_risk` while keeping the workflow runnable from `scripts/run_wildfire_risk.py`.
+- Input requirements, output classes, and limitations in `docs/RISK_WORKFLOWS.md`.
+
+Verified:
+
+- Workflow loads DEM and vegetation/fuel input.
+- Slope is generated or reused from terrain workflow logic.
+- Vegetation/fuel classes are normalized into stable risk inputs.
+- Wildfire-risk output is written to disk.
+- Workflow works without dashboard or PostGIS.
+
 ### `[DONE]` Initial GeoVisLM Project Scaffold
 
 Completed in commit:

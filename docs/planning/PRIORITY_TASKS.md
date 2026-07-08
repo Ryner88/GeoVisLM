@@ -9,112 +9,60 @@ Status labels:
 
 ## Current Priority Queue
 
-### 1. `[IN-PROGRESS]` Deployment Security Hardening
+### 1. `[TODO]` Harden Legacy Compose Container Recreate Failures
 
-Goal: finish deployment security hardening after server-side validation.
+Goal: make the VPS deployment path resilient when legacy `docker-compose` 1.29.2 raises `KeyError: ContainerConfig` while recreating `dashboard`, `worker`, or `db` containers.
 
-Current status:
+Observed failure:
 
-- Implemented on branch `securityfixes`.
-- Commit: `151d54a Fix deployment security findings`.
-- App-level validation passed locally.
-- Server validation is pending because `securityfixes` is not available on `/opt/geovis_lm` yet.
+```text
+ERROR: for geovis_lm_dashboard_1  "ContainerConfig"
+ERROR: for dashboard  "ContainerConfig"
+KeyError: "ContainerConfig"
+```
+
+Current mitigation:
+
+- `deploy_runbook.sh` avoids recreating PostGIS through legacy Compose.
+- The runbook starts or reuses `geovis_lm_db_1` directly with Docker and the persistent `geovis_lm_geovis_postgis` volume.
+- Dashboard and worker are recreated with `docker-compose up -d --no-deps --no-build --force-recreate dashboard worker` after building the shared app image.
 
 Remaining work:
 
-- Push or otherwise make `securityfixes` available on the VPS.
-- Fetch and check out the branch under `/opt/geovis_lm`.
-- Set required deployment secrets:
-  - `GEOVIS_AUTH_TOKEN`
-  - `POSTGRES_PASSWORD`
-- Run Docker Compose validation on the server.
-- Move this item to `docs/planning/FIXED_TASKS.md` after server validation passes.
+- Add a regression check or smoke procedure that verifies redeploy does not trigger the Compose v1 `ContainerConfig` traceback.
+- Document the manual recovery steps for stale Compose-renamed containers such as `12a511c3e99e_geovis_lm_db_1`.
+- Confirm the runbook preserves PostGIS volumes and keeps `dashboard`, `worker`, and `db` healthy after repeated deploys.
 
 Acceptance criteria:
 
-- Docker Compose validation passes on the VPS with required secrets set.
-- The deployed stack no longer relies on known default auth or database credentials.
-- Session cookies are configured securely for HTTPS deployment.
-- The Docker validation subprocess hardening remains in place.
+- Running `sudo ./deploy_runbook.sh --skip-pull --cache` on the VPS completes without `ContainerConfig` errors.
+- Repeated deploys leave `geovis_lm_db_1`, `geovis_lm_dashboard_1`, and `geovis_lm_worker_1` running or healthy.
+- Public login still renders the first-party auth UI and `/readyz` returns ready after redeploy.
 
-### 2. `[DONE]` Add First-Party Login and Signup for GeoVis LM
+### 2. `[TODO]` Migrate VPS Deployment from Legacy `docker-compose` v1 to Compose v2
 
-Goal: add real application-level authentication so users can sign up, log in, log out, and access only their own dashboard runs, uploads, and outputs. Cloudflare Access should remain useful as an outer staging gate, but GeoVis LM should no longer rely only on that or a shared token.
+Goal: remove the legacy Compose 1.29.2 deployment risk that can raise `KeyError: ContainerConfig` during container recreation.
 
-Implemented first-party authentication for the FastAPI dashboard while keeping bearer-token API authentication available for service clients.
+Why priority: the current VPS runbook has a direct-Docker mitigation for PostGIS and recreates only app services, but the cleaner long-term fix is to install and standardize on Docker Compose v2 or another supported deploy runner.
 
-Scope:
+Observed failure:
 
-- Add a users table with email, password hash, display name, role, and activation fields.
-- Use a standard password hashing library and never store plaintext passwords.
-- Add secure session-based authentication with HTTP-only cookies and a configurable session secret.
-- Add signup, login, logout, and protected route handling.
-- Add optional invite-code-based signup controls for staging.
-- Associate runs, uploads, and outputs with the authenticated user.
-- Add tests for signup, login, logout, unauthorized access, and per-user isolation.
-- Update deployment docs and environment examples with auth settings.
+```text
+ERROR: for geovis_lm_dashboard_1  "ContainerConfig"
+ERROR: for dashboard  "ContainerConfig"
+KeyError: "ContainerConfig"
+```
 
-Acceptance criteria:
+Remaining work:
 
-- A new user can sign up when signup is enabled.
-- Signup can be restricted by invite code.
-- A user can log in and log out successfully.
-- Dashboard and API routes are protected for unauthenticated users.
-- Runs, uploads, and outputs are associated with the logged-in user.
-- Users cannot access another user’s outputs or runs.
-- Passwords are securely hashed and not exposed.
-- Environment documentation lists the auth-related settings and secret rotation guidance.
-
-Implementation notes:
-
-- Added file-backed first-party users with normalized email addresses, Argon2 password hashes, display names, roles, active flags, and activation metadata.
-- Added a `geovis_users` PostGIS schema table for database-backed deployments.
-- Added `/signup`, `/login`, `/logout`, `/api/auth/signup`, `/api/auth/login`, and `/api/auth/me`.
-- Added signed HTTP-only session cookies using `GEOVIS_SESSION_SECRET` with `GEOVIS_SECRET_KEY`/`GEOVIS_AUTH_TOKEN` fallback compatibility.
-- Added `GEOVIS_SIGNUP_ENABLED` and `GEOVIS_SIGNUP_INVITE_CODE` controls.
-- Added tests for signup, invite-code gating, login, logout, protected routes, and per-user project isolation.
-- Updated README and deployment/storage docs with auth settings and session-secret rotation guidance.
-
-### 3. `[DONE]` Add Flood Risk Workflow
-
-Goal: combine DEM-derived terrain outputs, river proximity, slope, and optional building footprint overlays into a basic flood-risk analysis workflow.
+- Install or enable Docker Compose v2 on the VPS.
+- Update deployment scripts and docs to prefer `docker compose` when available.
+- Remove or simplify direct-Docker workarounds once Compose v2 is verified.
+- Add a rollback note for preserving the `geovis_lm_geovis_postgis` volume.
 
 Acceptance criteria:
 
-- Workflow loads a DEM and at least one river or stream vector layer.
-- River buffers are generated.
-- DEM/slope-derived terrain risk is combined with river proximity.
-- Flood-risk output is written to a run-scoped output folder.
-- Output classes are documented.
-- Workflow works without dashboard or PostGIS.
-- README or workflow documentation explains input requirements and limitations.
-
-Implementation notes:
-
-- Added a filesystem-first flood-risk workflow that combines DEM-derived low elevation, flat terrain, and river-buffer proximity into `flood_risk.tif`.
-- River buffers are generated as `river_buffers.geojson`.
-- Added a JSON summary with output classes, model weights, inputs, outputs, and limitations.
-- Added dashboard adapter support for `workflow_type=flood_risk` while keeping the workflow runnable from `scripts/run_flood_risk.py`.
-- Documented input requirements, output classes, and limitations in `docs/RISK_WORKFLOWS.md`.
-
-### 4. `[DONE]` Add Wildfire Risk Workflow
-
-Goal: combine slope, vegetation/fuel data, optional wind or sensor inputs, and proximity layers into a basic wildfire-risk analysis workflow.
-
-Acceptance criteria:
-
-- Workflow loads DEM and vegetation/fuel input.
-- Slope is generated or reused from terrain workflow logic.
-- Vegetation/fuel classes are normalized into stable risk inputs.
-- Wildfire-risk output is written to disk.
-- Output classes are documented.
-- Workflow works without dashboard or PostGIS.
-- README or workflow documentation explains input requirements and limitations.
-
-Implementation notes:
-
-- Added a filesystem-first wildfire-risk workflow that combines DEM-derived slope, normalized vegetation/fuel inputs, and optional proximity vectors into `wildfire_risk.tif`.
-- Fuel vectors normalize numeric or common text fuel classes into stable low, moderate, and high risk inputs; fuel rasters are reprojected to the DEM grid.
-- Added a JSON summary with output classes, normalized fuel metadata, inputs, outputs, and limitations.
-- Added dashboard adapter support for `workflow_type=wildfire_risk` while keeping the workflow runnable from `scripts/run_wildfire_risk.py`.
-- Documented input requirements, output classes, and limitations in `docs/RISK_WORKFLOWS.md`.
+- `docker compose version` works on the VPS.
+- Repeated deploys can recreate dashboard and worker without the `ContainerConfig` traceback.
+- PostGIS data survives deploys and container recreation.
+- Deployment documentation clearly states whether Compose v1 fallback is still supported.
