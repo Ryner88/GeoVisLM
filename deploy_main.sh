@@ -6,7 +6,8 @@ cd "$repo_root"
 
 source_branch="${1:-appAuth}"
 target_branch="${2:-main}"
-website_command="${GEOVIS_DEPLOY_WEBSITE_COMMAND:-curl -fsS -X POST https://geovis.nextgenbytes.me/}"
+website_command="${GEOVIS_DEPLOY_WEBSITE_COMMAND:-}"
+verify_command="${GEOVIS_DEPLOY_VERIFY_COMMAND:-curl -fsS https://geovis.nextgenbytes.me/readyz}"
 
 if ! git rev-parse --verify "$source_branch" >/dev/null 2>&1; then
   echo "Source branch '$source_branch' does not exist locally." >&2
@@ -21,6 +22,15 @@ git push origin "$source_branch:$target_branch"
 if [[ -n "$website_command" ]]; then
   echo "Running website deployment command..."
   eval "$website_command"
+  echo
 else
-  echo "No website deployment command configured. Set GEOVIS_DEPLOY_WEBSITE_COMMAND to enable it."
+  echo "No website deployment command configured. Set GEOVIS_DEPLOY_WEBSITE_COMMAND to trigger an external deploy."
+fi
+
+if [[ -n "$verify_command" ]]; then
+  echo "Running website verification command..."
+  eval "$verify_command"
+  echo
+else
+  echo "No website verification command configured. Set GEOVIS_DEPLOY_VERIFY_COMMAND to enable it."
 fi
