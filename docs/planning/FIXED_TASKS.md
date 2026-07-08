@@ -8,24 +8,6 @@ Status labels:
 
 ## Completed Work
 
-### `[DONE]` Fix Deployment Security Findings
-
-Implemented:
-
-- Removed production-capable default secrets from `docker-compose.yml`.
-- Required `GEOVIS_AUTH_TOKEN` and `POSTGRES_PASSWORD` for Docker Compose deployments.
-- Added `GEOVIS_SESSION_COOKIE_SECURE` and set dashboard session cookies with the `Secure` attribute by default.
-- Kept local HTTP tests working through an explicit insecure-cookie test override.
-- Hardened Docker executable selection in `scripts/validate_docker_deployment.py` by allowing only trusted Docker CLI paths before running `docker compose config`.
-- Confirmed `scripts/local_operational_smoke.py` uses fixed argv execution without shell usage.
-- Confirmed PyTorch remains pinned to `torch==2.12.1+cpu` with compatible `sympy==1.13.3`.
-
-Verified:
-
-- `python3 -m py_compile geovis_lm/dashboard/app.py geovis_lm/dashboard/operations.py scripts/validate_docker_deployment.py scripts/local_operational_smoke.py`
-- `.venv/bin/python -m pytest tests/test_deployment_security.py tests/test_staging_helpers.py`
-- `python3 scripts/validate_docker_deployment.py`
-
 ### `[DONE]` Initial GeoVisLM Project Scaffold
 
 Completed in commit:

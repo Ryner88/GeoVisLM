@@ -22,6 +22,7 @@ from geovis_lm.gis.vector import (
     validate_vector,
     write_vector_geojson,
 )
+from geovis_lm.gis.risk import execute_flood_risk_workflow, execute_wildfire_risk_workflow
 
 
 SUPPORTED_DEM_EXTENSIONS = {".tif", ".tiff"}
@@ -319,6 +320,140 @@ def execute_dem_analysis(
             "summary_path": str(summary_path),
             "vector_layers": vector_layers,
             "render_enabled": bool_parameter(parameters, "render_overlay", True),
+            "logs": logs,
+        },
+        logs=logs,
+    )
+
+
+def _ensure_vector_inputs(vector_paths: list[Path], workflow: str) -> list[Path]:
+    if not vector_paths:
+        raise AnalysisExecutionError(
+            f"missing_{workflow}_vector",
+            f"{workflow.replace('_', ' ').title()} workflow requires at least one vector input",
+            retryable=True,
+            stage="input_validation",
+        )
+    for vector_path in vector_paths:
+        if vector_path.suffix.lower() not in SUPPORTED_VECTOR_SUFFIXES:
+            raise AnalysisExecutionError(
+                "unsupported_vector_input",
+                f"Unsupported vector input extension: {vector_path.suffix.lower()}",
+                retryable=False,
+                stage="vector_validation",
+                detail={
+                    "input_path": str(vector_path),
+                    "supported_extensions": sorted(SUPPORTED_VECTOR_SUFFIXES),
+                },
+            )
+    return [Path(path) for path in vector_paths]
+
+
+def execute_flood_analysis(
+    dem_path: Path,
+    *,
+    maps_dir: Path,
+    reports_dir: Path,
+    vector_paths: list[Path] | None = None,
+    parameters: dict[str, Any] | None = None,
+) -> AnalysisExecutionResult:
+    parameters = parameters or {}
+    vector_paths = _ensure_vector_inputs(vector_paths or [], "flood_risk")
+    maps_dir.mkdir(parents=True, exist_ok=True)
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    logs = [f"adapter=flood_risk input={dem_path}", f"stage=river_input input={vector_paths[0]}"]
+    try:
+        summary = execute_flood_risk_workflow(
+            Path(dem_path),
+            vector_paths[0],
+            output_dir=maps_dir,
+            parameters=parameters,
+        )
+        summary_path = maps_dir / "flood_risk_summary.json"
+        reports_summary_path = reports_dir / "flood_risk_summary.json"
+        reports_summary_path.write_text(summary_path.read_text(encoding="utf-8"), encoding="utf-8")
+    except AnalysisExecutionError:
+        raise
+    except Exception as exc:
+        raise AnalysisExecutionError(
+            "flood_risk_failed",
+            str(exc),
+            retryable=True,
+            stage="flood_risk",
+            detail={"input_path": str(dem_path), "error_type": type(exc).__name__, "logs": logs},
+        ) from exc
+
+    logs.append("stage=complete")
+    outputs = {
+        "flood_risk": summary["outputs"]["flood_risk"],
+        "river_buffers": summary["outputs"]["river_buffers"],
+        "flood_risk_summary_json": str(reports_summary_path),
+    }
+    return AnalysisExecutionResult(
+        adapter="flood_risk",
+        outputs=outputs,
+        metadata={
+            "crs": summary.get("crs"),
+            "risk_classes": summary.get("risk_classes", {}),
+            "summary_path": str(reports_summary_path),
+            "river_input": str(vector_paths[0]),
+            "logs": logs,
+        },
+        logs=logs,
+    )
+
+
+def execute_wildfire_analysis(
+    dem_path: Path,
+    *,
+    maps_dir: Path,
+    reports_dir: Path,
+    vector_paths: list[Path] | None = None,
+    parameters: dict[str, Any] | None = None,
+) -> AnalysisExecutionResult:
+    parameters = parameters or {}
+    vector_paths = _ensure_vector_inputs(vector_paths or [], "wildfire_risk")
+    maps_dir.mkdir(parents=True, exist_ok=True)
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    fuel_path = vector_paths[0]
+    proximity_paths = vector_paths[1:]
+    logs = [f"adapter=wildfire_risk input={dem_path}", f"stage=fuel_input input={fuel_path}"]
+    try:
+        summary = execute_wildfire_risk_workflow(
+            Path(dem_path),
+            fuel_path,
+            output_dir=maps_dir,
+            proximity_paths=proximity_paths,
+            parameters=parameters,
+        )
+        summary_path = maps_dir / "wildfire_risk_summary.json"
+        reports_summary_path = reports_dir / "wildfire_risk_summary.json"
+        reports_summary_path.write_text(summary_path.read_text(encoding="utf-8"), encoding="utf-8")
+    except AnalysisExecutionError:
+        raise
+    except Exception as exc:
+        raise AnalysisExecutionError(
+            "wildfire_risk_failed",
+            str(exc),
+            retryable=True,
+            stage="wildfire_risk",
+            detail={"input_path": str(dem_path), "error_type": type(exc).__name__, "logs": logs},
+        ) from exc
+
+    logs.append("stage=complete")
+    outputs = {
+        "wildfire_risk": summary["outputs"]["wildfire_risk"],
+        "wildfire_risk_summary_json": str(reports_summary_path),
+    }
+    return AnalysisExecutionResult(
+        adapter="wildfire_risk",
+        outputs=outputs,
+        metadata={
+            "crs": summary.get("crs"),
+            "risk_classes": summary.get("risk_classes", {}),
+            "summary_path": str(reports_summary_path),
+            "fuel": summary.get("fuel", {}),
+            "proximity_layers": summary.get("proximity_layers", []),
             "logs": logs,
         },
         logs=logs,

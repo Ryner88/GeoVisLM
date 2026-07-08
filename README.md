@@ -47,6 +47,27 @@ The first MVP focuses on terrain analysis:
 
 - [QGIS Terrain Workflow](docs/QGIS_WORKFLOW.md)
 
+## Flood and Wildfire Risk Workflows
+
+Filesystem-first flood and wildfire screening workflows can run without the
+dashboard or PostGIS:
+
+```bash
+.venv/bin/python scripts/run_flood_risk.py \
+  --dem data/sample/sample_dem.tif \
+  --rivers path/to/rivers.geojson \
+  --output-dir outputs/flood_risk
+
+.venv/bin/python scripts/run_wildfire_risk.py \
+  --dem data/sample/sample_dem.tif \
+  --fuel path/to/fuel.geojson \
+  --fuel-field fuel_class \
+  --output-dir outputs/wildfire_risk
+```
+
+See [Flood and Wildfire Risk Workflows](docs/RISK_WORKFLOWS.md) for input
+requirements, risk classes, outputs, and limitations.
+
 ## ParaView Terrain Visualization
 
 GeoVisLM includes a first ParaView-compatible terrain rendering entry point at
@@ -109,8 +130,9 @@ The FastAPI dashboard runs from the project virtual environment:
 
 The dashboard supports a file-backed operational workflow with projects, runs,
 validated input files, run lifecycle history, output browsing, report
-generation, and optional authentication headers. In local development,
-authentication is disabled unless `GEOVIS_REQUIRE_AUTH=true` is set.
+generation, first-party login/signup, and optional bearer authentication for
+API/service access. In local development, authentication is disabled unless
+`GEOVIS_REQUIRE_AUTH=true` is set.
 
 Create a project, create a run, upload a DEM, run terrain analysis, and
 generate a report:
@@ -166,12 +188,23 @@ Preview is intentionally limited to registered PNG outputs.
 Operational settings are environment-driven:
 
 - `GEOVIS_OUTPUT_ROOT`: storage root for projects, runs, uploads, and outputs
-- `GEOVIS_REQUIRE_AUTH`: require `x-geovis-user` on operational routes
-- `GEOVIS_AUTH_TOKEN`: bearer token required when `GEOVIS_REQUIRE_AUTH=true`
+- `GEOVIS_REQUIRE_AUTH`: require a browser session or bearer token on operational routes
+- `GEOVIS_SESSION_SECRET`: secret used to sign first-party dashboard sessions
+- `GEOVIS_SIGNUP_ENABLED`: enable first-party signup when set to `true`
+- `GEOVIS_SIGNUP_INVITE_CODE`: optional invite code required during signup
+- `GEOVIS_AUTH_TOKEN`: optional bearer token for API/service authentication
 - `GEOVIS_MAX_UPLOAD_FILE_MB`: maximum single upload size
 - `GEOVIS_MAX_UPLOAD_BATCH_MB`: maximum batch upload size
 - `GEOVIS_MAX_BATCH_FILES`: maximum files per upload batch
 - `GEOVIS_DATABASE_URL`: optional PostGIS connection string
+
+When authentication is required, browser users can create an account at
+`/signup` if signup is enabled, sign in at `/login`, and sign out with
+`POST /logout`. JSON clients can use `/api/auth/signup`, `/api/auth/login`, and
+`/api/auth/me`; successful signup and login responses set the HTTP-only
+`geovis_session` cookie. Bearer-token API calls remain available when
+`GEOVIS_AUTH_TOKEN` is configured and include `Authorization: Bearer <token>`
+with `x-geovis-user`.
 
 Run a local HTTP smoke test that starts Uvicorn on an available port and drives
 the full project, upload, analysis, report, and output workflow:

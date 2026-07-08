@@ -11,7 +11,7 @@ import re
 import secrets
 import shutil
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -51,6 +51,7 @@ ALLOWED_EXTENSIONS = {
 }
 SHAPEFILE_REQUIRED = {".shp", ".shx", ".dbf"}
 DASHBOARD_SESSION_COOKIE = "geovis_session"
+SESSION_TTL_HOURS = 24
 
 
 def utc_now() -> str:
@@ -82,6 +83,9 @@ class DashboardConfig:
     max_batch_files: int
     require_auth: bool
     auth_token: str | None
+    session_secret: str | None
+    signup_enabled: bool
+    signup_invite_code: str | None
     session_cookie_secure: bool
     database_url: str | None
 
@@ -97,6 +101,9 @@ class DashboardConfig:
             max_batch_files=env_int("GEOVIS_MAX_BATCH_FILES", 50),
             require_auth=env_bool("GEOVIS_REQUIRE_AUTH", False),
             auth_token=os.getenv("GEOVIS_AUTH_TOKEN"),
+            session_secret=os.getenv("GEOVIS_SESSION_SECRET") or os.getenv("GEOVIS_SECRET_KEY"),
+            signup_enabled=env_bool("GEOVIS_SIGNUP_ENABLED", False),
+            signup_invite_code=os.getenv("GEOVIS_SIGNUP_INVITE_CODE"),
             session_cookie_secure=env_bool("GEOVIS_SESSION_COOKIE_SECURE", True),
             database_url=os.getenv("GEOVIS_DATABASE_URL"),
         )
@@ -113,12 +120,21 @@ class DashboardConfig:
     def jobs_root(self) -> Path:
         return self.output_root / "jobs"
 
+    @property
+    def users_root(self) -> Path:
+        return self.output_root / "users"
+
+    @property
+    def effective_session_secret(self) -> str | None:
+        return self.session_secret or self.auth_token
+
 
 def ensure_storage(config: DashboardConfig) -> None:
     config.output_root.mkdir(parents=True, exist_ok=True)
     config.projects_root.mkdir(parents=True, exist_ok=True)
     config.runs_root.mkdir(parents=True, exist_ok=True)
     config.jobs_root.mkdir(parents=True, exist_ok=True)
+    config.users_root.mkdir(parents=True, exist_ok=True)
 
 
 def read_json(path: Path, missing_detail: str) -> dict[str, Any]:
@@ -169,17 +185,19 @@ def create_run_folders(base_dir: Path) -> None:
 
 
 def _session_signature(config: DashboardConfig, payload: str) -> str:
-    if not config.auth_token:
+    secret = config.effective_session_secret
+    if not secret:
         raise HTTPException(
             status_code=500,
-            detail="GEOVIS_AUTH_TOKEN must be configured when GEOVIS_REQUIRE_AUTH is true",
+            detail="GEOVIS_SESSION_SECRET must be configured when GEOVIS_REQUIRE_AUTH is true",
         )
-    return hmac.new(config.auth_token.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    return hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def create_dashboard_session(config: DashboardConfig, user_id: str, role: str = "owner") -> str:
+    expires_at = (datetime.now(timezone.utc) + timedelta(hours=SESSION_TTL_HOURS)).isoformat()
     payload = base64.urlsafe_b64encode(
-        json.dumps({"user_id": user_id, "role": role}, separators=(",", ":")).encode("utf-8")
+        json.dumps({"user_id": user_id, "role": role, "expires_at": expires_at}, separators=(",", ":")).encode("utf-8")
     ).decode("ascii")
     return f"{payload}.{_session_signature(config, payload)}"
 
@@ -196,25 +214,131 @@ def verify_dashboard_session(config: DashboardConfig, session_value: str | None)
         return None
     user_id = str(data.get("user_id") or "").strip()
     role = str(data.get("role") or "owner").strip() or "owner"
+    expires_at = str(data.get("expires_at") or "").strip()
     if not user_id:
         return None
+    if expires_at:
+        try:
+            if datetime.fromisoformat(expires_at) < datetime.now(timezone.utc):
+                return None
+        except ValueError:
+            return None
     return {"user_id": user_id, "role": role}
+
+
+def normalize_email(email: str) -> str:
+    normalized = (email or "").strip().lower()
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", normalized):
+        raise HTTPException(status_code=400, detail="A valid email address is required")
+    return normalized
+
+
+def user_path(config: DashboardConfig, email: str) -> Path:
+    digest = hashlib.sha256(normalize_email(email).encode("utf-8")).hexdigest()
+    return config.users_root / f"{digest}.json"
+
+
+def public_user(user: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": user["id"],
+        "email": user["email"],
+        "display_name": user.get("display_name") or user["email"],
+        "role": user.get("role", "owner"),
+        "active": bool(user.get("active", True)),
+        "created_at": user.get("created_at"),
+        "updated_at": user.get("updated_at"),
+    }
+
+
+def password_hasher():
+    from argon2 import PasswordHasher
+
+    return PasswordHasher()
+
+
+def get_user_by_email(config: DashboardConfig, email: str) -> dict[str, Any] | None:
+    path = user_path(config, email)
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def get_user_by_id(config: DashboardConfig, user_id: str) -> dict[str, Any] | None:
+    safe_id(user_id, "user_id")
+    for path in sorted(config.users_root.glob("*.json")):
+        user = json.loads(path.read_text(encoding="utf-8"))
+        if user.get("id") == user_id:
+            return user
+    return None
+
+
+def create_user(
+    config: DashboardConfig,
+    email: str,
+    password: str,
+    display_name: str = "",
+    invite_code: str | None = None,
+) -> dict[str, Any]:
+    if not config.signup_enabled:
+        raise HTTPException(status_code=403, detail="Signup is disabled")
+    if config.signup_invite_code and not secrets.compare_digest(invite_code or "", config.signup_invite_code):
+        raise HTTPException(status_code=403, detail="A valid invite code is required")
+    normalized_email = normalize_email(email)
+    if len(password) < 12:
+        raise HTTPException(status_code=400, detail="Password must be at least 12 characters")
+    path = user_path(config, normalized_email)
+    if path.exists():
+        raise HTTPException(status_code=409, detail="A user with that email already exists")
+    now = utc_now()
+    user = {
+        "id": uuid4().hex,
+        "email": normalized_email,
+        "password_hash": password_hasher().hash(password),
+        "display_name": display_name.strip() or normalized_email,
+        "role": "owner",
+        "active": True,
+        "created_at": now,
+        "updated_at": now,
+        "activated_at": now,
+    }
+    write_json(path, user)
+    return user
+
+
+def authenticate_user(config: DashboardConfig, email: str, password: str) -> dict[str, Any]:
+    from argon2.exceptions import VerificationError, VerifyMismatchError
+
+    user = get_user_by_email(config, email)
+    if not user or not user.get("active", True):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    hasher = password_hasher()
+    try:
+        verified = hasher.verify(user["password_hash"], password)
+    except (VerifyMismatchError, VerificationError, ValueError, KeyError) as exc:
+        raise HTTPException(status_code=401, detail="Invalid email or password") from exc
+    if not verified:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    if hasher.check_needs_rehash(user["password_hash"]):
+        user["password_hash"] = hasher.hash(password)
+        user["updated_at"] = utc_now()
+        write_json(user_path(config, user["email"]), user)
+    return user
 
 
 def principal_from_request(request: Request, config: DashboardConfig) -> dict[str, str]:
     user_id = request.headers.get("x-geovis-user")
     role = request.headers.get("x-geovis-role", "owner")
     if config.require_auth:
-        if not config.auth_token:
-            raise HTTPException(
-                status_code=500,
-                detail="GEOVIS_AUTH_TOKEN must be configured when GEOVIS_REQUIRE_AUTH is true",
-            )
         auth_header = request.headers.get("authorization", "")
         bearer_prefix = "Bearer "
         bearer_token = auth_header[len(bearer_prefix) :] if auth_header.startswith(bearer_prefix) else None
         supplied_token = bearer_token or request.headers.get("x-geovis-token")
         if supplied_token:
+            if not config.auth_token:
+                raise HTTPException(
+                    status_code=500,
+                    detail="GEOVIS_AUTH_TOKEN must be configured for bearer API authentication",
+                )
             if not secrets.compare_digest(supplied_token, config.auth_token):
                 raise HTTPException(status_code=401, detail="Authentication required")
             if not user_id:
@@ -223,6 +347,9 @@ def principal_from_request(request: Request, config: DashboardConfig) -> dict[st
             session_principal = verify_dashboard_session(config, request.cookies.get(DASHBOARD_SESSION_COOKIE))
             if not session_principal:
                 raise HTTPException(status_code=401, detail="Authentication required")
+            user = get_user_by_id(config, session_principal["user_id"])
+            if user and user.get("active", True):
+                return {"user_id": user["id"], "role": user.get("role", session_principal.get("role", "owner"))}
             return session_principal
     return {"user_id": user_id or "local-dev", "role": role}
 
@@ -483,6 +610,10 @@ def mime_type_for_path(path: Path) -> str:
 def output_stage(output_key: str) -> str:
     if output_key in {"slope", "hillshade", "terrain_risk"}:
         return "terrain_analysis"
+    if output_key in {"flood_risk", "river_buffers"}:
+        return "flood_risk"
+    if output_key == "wildfire_risk":
+        return "wildfire_risk"
     if output_key.startswith("vector_overlay_"):
         return "vector_overlay"
     if output_key.endswith("_png"):
@@ -512,7 +643,12 @@ def output_type_label(output_key: str, path: Path) -> str:
         "slope": "slope GeoTIFF",
         "hillshade": "hillshade GeoTIFF",
         "terrain_risk": "risk GeoTIFF",
+        "flood_risk": "flood risk GeoTIFF",
+        "wildfire_risk": "wildfire risk GeoTIFF",
+        "river_buffers": "river buffer GeoJSON",
         "terrain_summary_json": "summary JSON",
+        "flood_risk_summary_json": "flood risk summary JSON",
+        "wildfire_risk_summary_json": "wildfire risk summary JSON",
         "terrain_overlay_png": "overlay PNG render",
         "report_md": "terrain report",
     }

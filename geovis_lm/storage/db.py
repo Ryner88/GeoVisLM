@@ -57,6 +57,21 @@ def schema_sql() -> str:
     return """
 create extension if not exists postgis;
 
+create table if not exists geovis_users (
+    id uuid primary key,
+    email text not null unique,
+    password_hash text not null,
+    display_name text not null,
+    role text not null default 'owner',
+    active boolean not null default true,
+    activation_token_hash text,
+    activated_at timestamptz,
+    last_login_at timestamptz,
+    metadata jsonb not null default '{}'::jsonb,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+);
+
 create table if not exists geovis_projects (
     id uuid primary key,
     name text not null,

@@ -17,6 +17,8 @@ def app_module(tmp_path, monkeypatch):
     monkeypatch.setenv("GEOVIS_OUTPUT_ROOT", str(tmp_path / "outputs"))
     monkeypatch.setenv("GEOVIS_REQUIRE_AUTH", "true")
     monkeypatch.setenv("GEOVIS_AUTH_TOKEN", "test-token")
+    monkeypatch.setenv("GEOVIS_SESSION_SECRET", "test-session-secret")
+    monkeypatch.setenv("GEOVIS_SIGNUP_ENABLED", "true")
     monkeypatch.setenv("GEOVIS_SESSION_COOKIE_SECURE", "false")
     monkeypatch.setenv("GEOVIS_MAX_UPLOAD_FILE_MB", "1")
     monkeypatch.setenv("GEOVIS_MAX_UPLOAD_BATCH_MB", "2")
@@ -135,6 +137,101 @@ def test_browser_login_session_and_logout_flow(app_module):
 
     bearer = request(app_module.app, "get", "/api/projects", headers=auth())
     assert bearer.status_code == 200
+
+
+def test_first_party_signup_login_logout_and_user_isolation(app_module):
+    async def browser_flow():
+        async with AsyncClient(transport=ASGITransport(app=app_module.app), base_url="http://testserver") as alice:
+            signup = await alice.post(
+                "/signup",
+                data={
+                    "email": "Alice@example.com",
+                    "display_name": "Alice",
+                    "password": "correct horse battery staple",
+                    "next": "/",
+                },
+                follow_redirects=False,
+            )
+            assert signup.status_code == 303
+            assert signup.headers["location"] == "/"
+            assert "geovis_session" in signup.headers["set-cookie"]
+
+            me = await alice.get("/api/auth/me")
+            assert me.status_code == 200
+            assert me.json()["user"]["email"] == "alice@example.com"
+
+            project = await alice.post(
+                "/api/projects",
+                json={"name": "Alice Project", "description": "Private"},
+            )
+            assert project.status_code == 200
+            alice_project = project.json()
+
+            logout = await alice.post("/logout", follow_redirects=False)
+            assert logout.status_code == 303
+            assert (await alice.get("/api/projects")).status_code == 401
+
+            login = await alice.post(
+                "/login",
+                data={"email": "alice@example.com", "password": "correct horse battery staple", "next": "/"},
+                follow_redirects=False,
+            )
+            assert login.status_code == 303
+            assert (await alice.get(f"/api/projects/{alice_project['id']}")).status_code == 200
+
+        async with AsyncClient(transport=ASGITransport(app=app_module.app), base_url="http://testserver") as bob:
+            bob_signup = await bob.post(
+                "/api/auth/signup",
+                json={
+                    "email": "bob@example.com",
+                    "display_name": "Bob",
+                    "password": "correct horse battery staple",
+                },
+            )
+            assert bob_signup.status_code == 200
+            assert bob_signup.json()["user"]["email"] == "bob@example.com"
+
+            forbidden = await bob.get(f"/api/projects/{alice_project['id']}")
+            assert forbidden.status_code == 403
+
+            projects = await bob.get("/api/projects")
+            assert projects.status_code == 200
+            assert projects.json()["projects"] == []
+
+    asyncio.run(browser_flow())
+
+
+def test_signup_invite_code_is_enforced(tmp_path, monkeypatch):
+    monkeypatch.setenv("GEOVIS_OUTPUT_ROOT", str(tmp_path / "outputs"))
+    monkeypatch.setenv("GEOVIS_REQUIRE_AUTH", "true")
+    monkeypatch.setenv("GEOVIS_SESSION_SECRET", "test-session-secret")
+    monkeypatch.setenv("GEOVIS_SIGNUP_ENABLED", "true")
+    monkeypatch.setenv("GEOVIS_SIGNUP_INVITE_CODE", "invite-only")
+    monkeypatch.setenv("GEOVIS_SESSION_COOKIE_SECURE", "false")
+
+    for module_name in ("geovis_lm.dashboard.app", "geovis_lm.dashboard.operations"):
+        sys.modules.pop(module_name, None)
+    app_module = importlib.import_module("geovis_lm.dashboard.app")
+
+    missing_invite = request(
+        app_module.app,
+        "post",
+        "/api/auth/signup",
+        json={"email": "user@example.com", "password": "correct horse battery staple"},
+    )
+    assert missing_invite.status_code == 403
+
+    accepted = request(
+        app_module.app,
+        "post",
+        "/api/auth/signup",
+        json={
+            "email": "user@example.com",
+            "password": "correct horse battery staple",
+            "invite_code": "invite-only",
+        },
+    )
+    assert accepted.status_code == 200
 
 
 def test_browser_end_to_end_workflow_from_login_to_outputs(app_module):
