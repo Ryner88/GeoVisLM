@@ -6,7 +6,7 @@ cd "$repo_root"
 
 source_branch="${1:-appAuth}"
 target_branch="${2:-main}"
-website_command="${GEOVIS_DEPLOY_WEBSITE_COMMAND:-}"
+website_command="${GEOVIS_DEPLOY_WEBSITE_COMMAND:-curl -fsS -X POST https://geovis.nextgenbytes.me/}"
 
 if ! git rev-parse --verify "$source_branch" >/dev/null 2>&1; then
   echo "Source branch '$source_branch' does not exist locally." >&2
