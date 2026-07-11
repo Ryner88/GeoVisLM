@@ -11,7 +11,11 @@
 - Configured Full (strict) origin TLS for `geovis.nextgenbytes.me` with root-owned Caddy-readable certificate files outside Git.
 - Public and direct-origin GET readiness return HTTP 200; HEAD readiness returns the expected method-not-allowed response.
 - Validated public token session login/logout, queued worker processing, six artifacts, downloads/previews, and restart persistence.
-- Full production sign-off remains pending first-party account provisioning/login validation because Prime currently has no account records.
+- Provisioned and validated a first-party owner account through Cloudflare:
+  email/password login, authenticated dashboard access, Secure/HttpOnly cookie,
+  logout, post-logout denial, and invalid-password rejection all passed.
+- Revalidated bearer-token login/logout after owner provisioning; full production
+  sign-off now remains pending policy completion and the observation period.
 
 [DONE] Private VPS staging deployment
 - Cloned GeoVis LM to /opt/geovis_lm

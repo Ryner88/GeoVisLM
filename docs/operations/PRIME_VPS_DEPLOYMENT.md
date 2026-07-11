@@ -75,9 +75,15 @@ Validated on `2026-07-11` UTC through Cloudflare, Ray ID
 - `GET /login` returned the login HTML with inline HTTPS-safe assets, correct
   redirects, and a Secure session cookie during token-backed session testing.
 - Signup remained disabled (`GET /signup` returned 404).
-- Token-backed public session login, authenticated dashboard access, and logout
-  passed. Prime had zero first-party user account records, so production-account
-  email/password login remains a required policy/provisioning check.
+- Token-backed public session login, authenticated dashboard access, Secure
+  session-cookie handling, and logout passed.
+- A provisioned first-party owner account passed email/password login through
+  Cloudflare, authenticated dashboard access, Secure and HttpOnly session-cookie
+  checks, logout, and post-logout access denial. A known-invalid password was
+  rejected with HTTP 401. No credentials were recorded.
+- Targeted browser-session and deployment-security regressions passed (2 tests),
+  and bearer-token session authentication continued to pass after first-party
+  account provisioning.
 - Public terrain run `6f71590b507f442e82b5d648bf78741f` completed through
   the persistent worker with six registered artifacts; previews and downloads
   passed. The completed run and all artifacts survived a Compose restart.
@@ -86,9 +92,8 @@ Validated on `2026-07-11` UTC through Cloudflare, Ray ID
 - Dashboard, worker, PostGIS, Caddy, firewall, and port checks passed with no
   runtime failures in the validation log window.
 
-Do not retire the former deployment until a production account is provisioned
-and tested, an observation period completes, and retirement is explicitly
-approved.
+Do not retire the former deployment until the observation period completes,
+backups are confirmed, and retirement is explicitly approved.
 
 ## Routine operations
 

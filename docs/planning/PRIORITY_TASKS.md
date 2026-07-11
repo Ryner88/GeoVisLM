@@ -11,17 +11,17 @@ Status labels:
 
 ### 0. `[IN-PROGRESS]` Finalize Prime account policy and production sign-off
 
-Prime, Cloudflare Full (strict) Origin CA TLS, public readiness, token-backed
-login/logout, public worker workflow, artifact access, and restart persistence
-are validated. Decide the production signup policy, invite-code requirement,
-initial admin account procedure, and recovery flow using the first-party
-authentication code already present on `main`; do not enable open signup by
-default. Provision and validate a first-party production account without
-recording credentials.
+Prime, Cloudflare Full (strict) Origin CA TLS, public readiness, first-party
+owner login/logout, invalid-password rejection, Secure/HttpOnly cookies,
+token-backed authentication, public worker workflow, artifact access, and
+restart persistence are validated. Decide the production signup policy,
+invite-code requirement, admin provisioning procedure, and recovery flow using
+the first-party authentication code already present on `main`; do not enable
+open signup by default. The production owner credential was not recorded.
 
 Acceptance criteria:
 
-- A first-party production account can log in and log out through Cloudflare.
+- [x] A first-party production account can log in and log out through Cloudflare.
 - Signup/invite/admin/recovery policy is documented and tested.
 - Public production validation is formally signed off after an observation period.
 
