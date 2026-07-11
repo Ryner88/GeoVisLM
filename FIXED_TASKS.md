@@ -1,11 +1,17 @@
-[STAGED] Prime VPS migration/import completed pending public origin cutover
+[DONE] Prime VPS migration/import and staging validation
 - Inspected Prime resources, packages, services, firewall, and ports before changes.
 - Installed Docker Engine, Docker Compose v2, and Caddy; left Nginx disabled/absent.
 - Synchronized clean `main` checkout at `/opt/geovis_lm` and generated root-only deployment secrets.
 - Deployed healthy dashboard, persistent worker, and PostGIS services with localhost-only dashboard binding.
 - Passed compilation, 35 tests, deployment/Compose validation, worker smoke, and restart persistence checks.
 - Configured and validated Caddy plus UFW rules for SSH, HTTP, and HTTPS without exposing port 8000.
-- Public Cloudflare HTTPS remains blocked pending origin/DNS and trusted origin TLS cutover; the old deployment must remain available.
+- Cloudflare public readiness and the complete queued-analysis workflow pass; the old deployment remains available pending explicit retirement approval.
+
+[DONE] Prime Cloudflare Origin CA TLS
+- Configured Full (strict) origin TLS for `geovis.nextgenbytes.me` with root-owned Caddy-readable certificate files outside Git.
+- Public and direct-origin GET readiness return HTTP 200; HEAD readiness returns the expected method-not-allowed response.
+- Validated public token session login/logout, queued worker processing, six artifacts, downloads/previews, and restart persistence.
+- Full production sign-off remains pending first-party account provisioning/login validation because Prime currently has no account records.
 
 [DONE] Private VPS staging deployment
 - Cloned GeoVis LM to /opt/geovis_lm

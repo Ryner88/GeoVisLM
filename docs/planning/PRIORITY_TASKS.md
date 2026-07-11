@@ -9,20 +9,28 @@ Status labels:
 
 ## Current Priority Queue
 
-### 0. `[TODO]` Finalize Prime public origin and account policy
+### 0. `[IN-PROGRESS]` Finalize Prime account policy and production sign-off
 
-After Prime is approved, point the Cloudflare origin/DNS record to Prime and
-replace temporary internal origin TLS with a publicly trusted or Cloudflare
-Origin certificate. Verify public HTTPS before retiring the previous server.
-Decide the production signup policy, invite-code requirement, initial admin
-account procedure, and recovery flow using the first-party authentication code
-already present on `main`; do not enable open signup by default.
+Prime, Cloudflare Full (strict) Origin CA TLS, public readiness, token-backed
+login/logout, public worker workflow, artifact access, and restart persistence
+are validated. Decide the production signup policy, invite-code requirement,
+initial admin account procedure, and recovery flow using the first-party
+authentication code already present on `main`; do not enable open signup by
+default. Provision and validate a first-party production account without
+recording credentials.
 
 Acceptance criteria:
 
-- Public `/readyz` and login return successfully through Cloudflare and Caddy.
+- A first-party production account can log in and log out through Cloudflare.
 - Signup/invite/admin/recovery policy is documented and tested.
-- The previous deployment is retained until rollback approval is explicit.
+- Public production validation is formally signed off after an observation period.
+
+### 0a. `[TODO]` Retire former GeoVis deployment after observation period
+
+Keep the former server intact as the immediate rollback target. Retirement
+requires a completed observation period, successful production-account sign-in,
+confirmed backups, and explicit approval. Do not combine retirement with the
+Prime cutover validation task.
 
 ### 1. `[TODO]` Harden Legacy Compose Container Recreate Failures
 
