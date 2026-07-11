@@ -9,6 +9,21 @@ Status labels:
 
 ## Current Priority Queue
 
+### 0. `[TODO]` Finalize Prime public origin and account policy
+
+After Prime is approved, point the Cloudflare origin/DNS record to Prime and
+replace temporary internal origin TLS with a publicly trusted or Cloudflare
+Origin certificate. Verify public HTTPS before retiring the previous server.
+Decide the production signup policy, invite-code requirement, initial admin
+account procedure, and recovery flow using the first-party authentication code
+already present on `main`; do not enable open signup by default.
+
+Acceptance criteria:
+
+- Public `/readyz` and login return successfully through Cloudflare and Caddy.
+- Signup/invite/admin/recovery policy is documented and tested.
+- The previous deployment is retained until rollback approval is explicit.
+
 ### 1. `[TODO]` Harden Legacy Compose Container Recreate Failures
 
 Goal: make the VPS deployment path resilient when legacy `docker-compose` 1.29.2 raises `KeyError: ContainerConfig` while recreating `dashboard`, `worker`, or `db` containers.

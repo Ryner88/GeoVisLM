@@ -1,3 +1,12 @@
+[STAGED] Prime VPS migration/import completed pending public origin cutover
+- Inspected Prime resources, packages, services, firewall, and ports before changes.
+- Installed Docker Engine, Docker Compose v2, and Caddy; left Nginx disabled/absent.
+- Synchronized clean `main` checkout at `/opt/geovis_lm` and generated root-only deployment secrets.
+- Deployed healthy dashboard, persistent worker, and PostGIS services with localhost-only dashboard binding.
+- Passed compilation, 35 tests, deployment/Compose validation, worker smoke, and restart persistence checks.
+- Configured and validated Caddy plus UFW rules for SSH, HTTP, and HTTPS without exposing port 8000.
+- Public Cloudflare HTTPS remains blocked pending origin/DNS and trusted origin TLS cutover; the old deployment must remain available.
+
 [DONE] Private VPS staging deployment
 - Cloned GeoVis LM to /opt/geovis_lm
 - Installed Docker/Compose on the VPS
