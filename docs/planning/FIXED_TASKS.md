@@ -8,6 +8,33 @@ Status labels:
 
 ## Completed Work
 
+### `[DONE]` Finalize Prime Account Policy and Production Sign-Off
+
+Formal production sign-off was recorded on `2026-07-13` UTC after the Prime
+service remained ready through the observation period that began with public
+validation on `2026-07-11` UTC.
+
+Implemented:
+
+- Closed-by-default production signup policy with no standing invite code.
+- Offline account provisioning, password reset, activation, and deactivation
+  through `scripts/manage_users.py` without opening public signup.
+- Least-privilege role guidance, recovery verification, session-secret rotation,
+  audit-note requirements, and quarterly access reviews.
+- Immediate rejection of an existing first-party session after its account is deactivated.
+
+Verified:
+
+- First-party production owner login/logout, invalid-password rejection, and
+  Secure/HttpOnly session handling had already passed through Cloudflare.
+- Public readiness reports storage, database mode, and required authentication ready.
+- Dashboard, worker, and PostGIS services are healthy after Compose recreation.
+- The available 48-hour service log window contains no traceback or runtime error.
+- Thirty focused authentication and deployment-security tests pass.
+
+Retirement of the former deployment remains a separate priority and still
+requires backup confirmation and explicit approval.
+
 ### `[DONE]` Deployment Security Hardening
 
 Finished the deployment security hardening work and validated it against the live VPS deployment.

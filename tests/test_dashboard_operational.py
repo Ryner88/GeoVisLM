@@ -234,6 +234,24 @@ def test_signup_invite_code_is_enforced(tmp_path, monkeypatch):
     assert accepted.status_code == 200
 
 
+def test_deactivated_account_loses_existing_session(app_module):
+    from geovis_lm.dashboard.operations import set_user_active
+
+    async def browser_flow():
+        async with AsyncClient(transport=ASGITransport(app=app_module.app), base_url="http://testserver") as client:
+            signup = await client.post(
+                "/api/auth/signup",
+                json={"email": "disabled@example.com", "password": "correct horse battery staple"},
+            )
+            assert signup.status_code == 200
+
+            set_user_active(app_module.CONFIG, "disabled@example.com", False)
+            response = await client.get("/api/projects")
+            assert response.status_code == 401
+
+    asyncio.run(browser_flow())
+
+
 def test_browser_end_to_end_workflow_from_login_to_outputs(app_module):
     from geovis_lm.dashboard.worker import run_worker_once
 

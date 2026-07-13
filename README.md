@@ -206,6 +206,12 @@ When authentication is required, browser users can create an account at
 `GEOVIS_AUTH_TOKEN` is configured and include `Authorization: Bearer <token>`
 with `x-geovis-user`.
 
+Production keeps public signup disabled. Operators can provision, deactivate,
+reactivate, and recover first-party accounts without opening signup by running
+`python scripts/manage_users.py --help` inside the dashboard container. See the
+[production account policy](docs/operations/ACCOUNT_POLICY.md) for the approved
+workflow and role rules.
+
 Run a local HTTP smoke test that starts Uvicorn on an available port and drives
 the full project, upload, analysis, report, and output workflow:
 

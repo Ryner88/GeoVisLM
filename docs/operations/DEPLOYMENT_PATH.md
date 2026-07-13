@@ -281,7 +281,7 @@ Recovery requirements:
 - Restore database and files to a consistent point in time.
 - Preserve project/run/file relationships.
 - Validate that reports and output paths still resolve after restore.
-- Document manual recovery procedure before production launch.
+- Follow `docs/operations/ACCOUNT_POLICY.md` for manual account recovery and session invalidation.
 
 ## Acceptance Criteria for Implementation
 

@@ -1,3 +1,9 @@
+[DONE] Prime account policy and production sign-off
+- Kept production signup closed with no standing invite code and documented operator-controlled provisioning, least-privilege roles, recovery, and access review.
+- Added an offline account-management command for create, reset-password, activate, and deactivate operations.
+- Verified deactivation rejects existing first-party sessions and passed 30 focused authentication/deployment-security tests.
+- Signed off Prime production on 2026-07-13 UTC after public readiness, healthy services, and clean available observation logs; former deployment retirement remains separately gated.
+
 [DONE] Prime VPS migration/import and staging validation
 - Inspected Prime resources, packages, services, firewall, and ports before changes.
 - Installed Docker Engine, Docker Compose v2, and Caddy; left Nginx disabled/absent.

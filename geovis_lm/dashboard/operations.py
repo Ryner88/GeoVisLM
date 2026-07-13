@@ -52,6 +52,7 @@ ALLOWED_EXTENSIONS = {
 SHAPEFILE_REQUIRED = {".shp", ".shx", ".dbf"}
 DASHBOARD_SESSION_COOKIE = "geovis_session"
 SESSION_TTL_HOURS = 24
+ACCOUNT_ROLES = {"admin", "owner", "editor", "viewer"}
 
 
 def utc_now() -> str:
@@ -283,9 +284,22 @@ def create_user(
         raise HTTPException(status_code=403, detail="Signup is disabled")
     if config.signup_invite_code and not secrets.compare_digest(invite_code or "", config.signup_invite_code):
         raise HTTPException(status_code=403, detail="A valid invite code is required")
+    return provision_user(config, email, password, display_name=display_name)
+
+
+def provision_user(
+    config: DashboardConfig,
+    email: str,
+    password: str,
+    display_name: str = "",
+    role: str = "owner",
+) -> dict[str, Any]:
     normalized_email = normalize_email(email)
     if len(password) < 12:
         raise HTTPException(status_code=400, detail="Password must be at least 12 characters")
+    normalized_role = role.strip().lower()
+    if normalized_role not in ACCOUNT_ROLES:
+        raise HTTPException(status_code=400, detail="Invalid account role")
     path = user_path(config, normalized_email)
     if path.exists():
         raise HTTPException(status_code=409, detail="A user with that email already exists")
@@ -295,13 +309,35 @@ def create_user(
         "email": normalized_email,
         "password_hash": password_hasher().hash(password),
         "display_name": display_name.strip() or normalized_email,
-        "role": "owner",
+        "role": normalized_role,
         "active": True,
         "created_at": now,
         "updated_at": now,
         "activated_at": now,
     }
     write_json(path, user)
+    return user
+
+
+def set_user_password(config: DashboardConfig, email: str, password: str) -> dict[str, Any]:
+    if len(password) < 12:
+        raise HTTPException(status_code=400, detail="Password must be at least 12 characters")
+    user = get_user_by_email(config, email)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user["password_hash"] = password_hasher().hash(password)
+    user["updated_at"] = utc_now()
+    write_json(user_path(config, user["email"]), user)
+    return user
+
+
+def set_user_active(config: DashboardConfig, email: str, active: bool) -> dict[str, Any]:
+    user = get_user_by_email(config, email)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user["active"] = active
+    user["updated_at"] = utc_now()
+    write_json(user_path(config, user["email"]), user)
     return user
 
 
@@ -348,7 +384,9 @@ def principal_from_request(request: Request, config: DashboardConfig) -> dict[st
             if not session_principal:
                 raise HTTPException(status_code=401, detail="Authentication required")
             user = get_user_by_id(config, session_principal["user_id"])
-            if user and user.get("active", True):
+            if user:
+                if not user.get("active", True):
+                    raise HTTPException(status_code=401, detail="Authentication required")
                 return {"user_id": user["id"], "role": user.get("role", session_principal.get("role", "owner"))}
             return session_principal
     return {"user_id": user_id or "local-dev", "role": role}

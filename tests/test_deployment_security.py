@@ -8,7 +8,17 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from geovis_lm.dashboard.operations import DashboardConfig
+from fastapi import HTTPException
+
+from geovis_lm.dashboard.operations import (
+    DashboardConfig,
+    authenticate_user,
+    create_user,
+    ensure_storage,
+    provision_user,
+    set_user_active,
+    set_user_password,
+)
 from scripts import validate_docker_deployment
 
 
@@ -33,6 +43,29 @@ def test_session_cookie_secure_can_be_disabled_for_local_http(monkeypatch, tmp_p
     monkeypatch.setenv("GEOVIS_SESSION_COOKIE_SECURE", "false")
 
     assert DashboardConfig.from_env().session_cookie_secure is False
+
+
+def test_closed_signup_allows_offline_provisioning_and_recovery(monkeypatch, tmp_path):
+    monkeypatch.setenv("GEOVIS_OUTPUT_ROOT", str(tmp_path))
+    monkeypatch.setenv("GEOVIS_SIGNUP_ENABLED", "false")
+    config = DashboardConfig.from_env()
+    ensure_storage(config)
+
+    with pytest.raises(HTTPException, match="Signup is disabled"):
+        create_user(config, "owner@example.com", "initial password value")
+
+    provision_user(config, "owner@example.com", "initial password value", role="admin")
+    assert authenticate_user(config, "owner@example.com", "initial password value")["role"] == "admin"
+
+    set_user_active(config, "owner@example.com", False)
+    with pytest.raises(HTTPException, match="Invalid email or password"):
+        authenticate_user(config, "owner@example.com", "initial password value")
+
+    set_user_password(config, "owner@example.com", "replacement password value")
+    set_user_active(config, "owner@example.com", True)
+    with pytest.raises(HTTPException, match="Invalid email or password"):
+        authenticate_user(config, "owner@example.com", "initial password value")
+    assert authenticate_user(config, "owner@example.com", "replacement password value")["active"] is True
 
 
 def test_docker_command_rejects_untrusted_path(monkeypatch, tmp_path):

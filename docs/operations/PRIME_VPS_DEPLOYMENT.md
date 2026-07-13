@@ -24,6 +24,11 @@ and `GEOVIS_SIGNUP_ENABLED=false`. Secret values must not appear in logs,
 documentation, or Git. Cloudflare Access credentials are not required by the
 application and were not copied.
 
+Production account signup, provisioning, role assignment, recovery, and access
+reviews follow `docs/operations/ACCOUNT_POLICY.md`. In particular, keep public
+signup disabled and use `scripts/manage_users.py` inside the dashboard
+container for operator-controlled account changes.
+
 ## Initial deployment and validation
 
 ```bash
@@ -94,6 +99,24 @@ Validated on `2026-07-11` UTC through Cloudflare, Ray ID
 
 Do not retire the former deployment until the observation period completes,
 backups are confirmed, and retirement is explicitly approved.
+
+## Production sign-off
+
+Production was formally signed off on `2026-07-13` UTC after the observation
+period that began with the `2026-07-11` public validation. At sign-off:
+
+- Public `/readyz` returned ready with storage, database mode, and required
+  authentication configured.
+- Dashboard, worker, and PostGIS reported healthy after a Compose recreation;
+  PostGIS remained healthy across the observation period.
+- The available 48-hour service log window showed successful startup and
+  readiness checks with no traceback or runtime error.
+- The closed-signup provisioning and recovery policy was documented, and 30
+  focused authentication and deployment-security tests passed.
+
+This sign-off approves Prime as the production service. It does not approve
+retirement of the former deployment; that still requires confirmed backups and
+explicit retirement approval.
 
 ## Routine operations
 
