@@ -8,26 +8,42 @@ Status labels:
 
 ## Completed Work
 
-### `[DONE]` Repair Deployment Entry-Point Compatibility
+### `[DONE]` Harden Container Recreates and Complete Compose v2 Migration
 
-Removed two local blockers that prevented the main deployment entry point from
-running on the Prime VPS.
+Removed the legacy Compose recreate failure path and completed the production
+migration to Docker Compose v2 on the Prime VPS.
 
 Implemented:
 
 - `deploy_main.sh` defaults to the currently checked-out branch, with `main` as
   the detached-HEAD fallback, instead of requiring the removed `appAuth` branch.
-- `deploy_runbook.sh` prefers Docker Compose v2 through `docker compose`.
-- The runbook retains legacy `docker-compose` compatibility and emits a clear
-  installation error when no Compose implementation is available.
+- `deploy_runbook.sh` requires Docker Compose v2 and rejects legacy
+  `docker-compose` v1 instead of retaining its `ContainerConfig` failure path.
+- PostGIS is managed through Compose v2 with its existing
+  `geovis_lm_geovis_postgis` volume; the direct-`docker run` workaround was
+  removed.
+- Deploys start and wait for PostGIS, then force-recreate only `dashboard` and
+  `worker`, waiting for both health checks.
+- `scripts/verify_compose_redeploy.sh` exercises repeated redeploys, rejects any
+  `ContainerConfig` traceback, checks all services and public endpoints, and
+  compares the PostgreSQL cluster identifier to prove volume persistence.
+- The Prime runbook documents Compose v2 as the only supported runner, manual
+  stale-container recovery, and rollback rules that preserve named volumes.
 
 Verified:
 
 - Both deployment scripts pass Bash syntax validation.
 - The repository passes `git diff --check`.
-- `docker compose config --quiet` succeeds.
-- `python3 scripts/validate_docker_deployment.py` succeeds.
-- Live redeploy and persistence verification remain tracked in the active Compose v2 migration task.
+- `docker compose config --quiet` and
+  `python3 scripts/validate_docker_deployment.py --compose-config` succeed.
+- On `2026-07-14`, two consecutive live Compose v2 redeploys completed without
+  `ContainerConfig`; dashboard, worker, and PostGIS were healthy after each.
+- Local and public readiness and public login checks passed after both redeploys.
+- The PostgreSQL cluster identifier was unchanged across both redeploys.
+- The deployment-security tests pass (`7 passed`) and the full containerized
+  suite passes (`37 passed`).
+- The authenticated public worker smoke run completed with six registered
+  outputs after the repeated redeploys.
 
 ### `[DONE]` Deployment Security Hardening
 
@@ -48,7 +64,8 @@ Verified:
 - Public login renders the first-party auth UI.
 - The PostGIS `geovis` role password was rotated to the current `.env` secret.
 - Dashboard and worker containers were restarted after secret rotation.
-- The remaining deployment risk is isolated to legacy Compose v1 container recreation and is tracked in the active priority queue.
+- The legacy Compose v1 recreate risk was subsequently eliminated by the
+  Compose v2 migration recorded above.
 
 ### `[DONE]` Add First-Party Login and Signup for GeoVis LM
 

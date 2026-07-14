@@ -24,6 +24,27 @@ and `GEOVIS_SIGNUP_ENABLED=false`. Secret values must not appear in logs,
 documentation, or Git. Cloudflare Access credentials are not required by the
 application and were not copied.
 
+## Supported Compose runner
+
+Production deployments require Docker Compose v2 through `docker compose`.
+Legacy `docker-compose` v1 is not supported and the deployment runbook refuses
+to use it. This prevents the v1 `KeyError: ContainerConfig` recreate failure
+and keeps database, dashboard, and worker lifecycle management on one supported
+runner.
+
+Before an upgrade, verify the runner and configuration:
+
+```bash
+docker compose version
+docker compose config --quiet
+```
+
+`deploy_runbook.sh` starts the `db` service through Compose without forcing its
+recreation, builds the shared app image, and force-recreates only `dashboard`
+and `worker`. The external volume name remains
+`geovis_lm_geovis_postgis`; never use `docker compose down --volumes` in deploy
+or recovery commands.
+
 ## Initial deployment and validation
 
 ```bash
@@ -43,6 +64,44 @@ docker compose exec -T dashboard python scripts/compose_worker_smoke.py --token 
 Load `.env` without printing it before the worker smoke command. A successful
 smoke test queues a DEM/vector run, waits for the persistent worker to complete
 it, and checks its raster, GeoJSON, PNG, and metadata artifacts.
+
+For a release or runner upgrade, exercise the exact redeploy path twice:
+
+```bash
+sudo ./scripts/verify_compose_redeploy.sh
+```
+
+The verifier rejects any `ContainerConfig` traceback, requires all three
+services to be running, checks local and public readiness/login, and compares
+PostgreSQL's cluster identifier before and after each redeploy. An unchanged
+identifier proves that the same PostGIS data directory remained mounted.
+
+## Legacy Compose stale-container recovery
+
+Compose v1 can leave renamed containers such as
+`12a511c3e99e_geovis_lm_db_1`. Preserve `.env` and both named volumes before
+recovery, then inspect the project state:
+
+```bash
+docker compose ps -a
+docker ps -a --filter label=com.docker.compose.project=geovis_lm
+docker volume inspect geovis_lm_geovis_postgis
+```
+
+If a stale renamed container conflicts with a Compose v2 service, record its
+name and mounts, stop it, and remove only that container:
+
+```bash
+docker inspect <stale-container>
+docker stop <stale-container>
+docker rm <stale-container>
+docker compose up -d --wait db
+docker compose up -d --no-deps --force-recreate --wait dashboard worker
+```
+
+Do not remove `geovis_lm_geovis_postgis`, pass `--volumes`, or delete an active
+database container until its mount has been confirmed. After recovery, run the
+repeated-redeploy verifier and the worker persistence smoke test.
 
 ## Caddy and Cloudflare origin TLS
 
