@@ -30,7 +30,15 @@ Verified:
 - Public readiness reports storage, database mode, and required authentication ready.
 - Dashboard, worker, and PostGIS services are healthy after Compose recreation.
 - The available 48-hour service log window contains no traceback or runtime error.
-- Thirty focused authentication and deployment-security tests pass.
+- The reconciled account-policy and Compose v2 image passes all 39 tests.
+- Two live redeploys preserved the PostGIS cluster and left all services healthy.
+- A fresh public worker run completed with six outputs.
+- PostGIS, output-volume, and restricted configuration backups were created,
+  restored into isolated targets, and verified by object/content comparison.
+- Cloudflare served the public domain and all 20 tagged public probes appeared
+  in Prime logs. Strict former-host zero-traffic confirmation remains part of
+  the separate retirement task because former-host/Cloudflare analytics were
+  not available on Prime.
 
 Retirement of the former deployment remains a separate priority and still
 requires backup confirmation and explicit approval.

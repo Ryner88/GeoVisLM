@@ -177,6 +177,33 @@ This sign-off approves Prime as the production service. It does not approve
 retirement of the former deployment; that still requires confirmed backups and
 explicit retirement approval.
 
+### 2026-07-14 sign-off revalidation
+
+The account-policy branch was reconciled with the completed Compose v2
+migration and exercised on Prime before merge:
+
+- The reconciled container image passed all 39 tests.
+- Two consecutive Compose v2 redeploys completed with dashboard, worker, and
+  PostGIS healthy; PostgreSQL's cluster identifier remained unchanged.
+- A new authenticated public worker run
+  (`adad9c4350cf4957a90eea7b75555921`) completed with six registered outputs.
+- A restricted backup set was created at
+  `/root/geovis-backups/signoff-20260714T163330Z`. PostGIS restored into an
+  isolated database with matching tables, extensions, and 8,500 spatial
+  reference rows. The output archive restored into an isolated volume with an
+  identical 57-file, 605,042-byte content digest. `.env`, Caddy configuration,
+  and the origin certificate pair restored byte-for-byte into an isolated
+  directory; backup checksums passed.
+- Cloudflare returned the public readiness response, direct-origin readiness
+  at `192.3.31.132` matched it, and all 20 uniquely tagged public probes were
+  present in the Prime dashboard logs.
+
+The public-path sample shows production requests reaching Prime and found no
+sample routed elsewhere. A strict assertion that the former VPS receives zero
+background traffic still requires either former-host access logs or
+authoritative Cloudflare origin analytics; neither is available on Prime. Keep
+former-host retirement as a separate explicitly approved operation.
+
 ## Routine operations
 
 ```bash
@@ -199,6 +226,14 @@ Stop writes or use database-consistent tooling. Back up PostGIS with
 `pg_dump`, archive the output volume from a temporary container, and copy the
 root-only `.env` and Caddyfile into restricted storage. Record the deployed Git
 commit. Test restoration periodically; a volume listing alone is not a backup.
+
+The `2026-07-14` restore drill used a custom-format `pg_dump`, a compressed
+archive of `geovis_lm_geovis_outputs`, and restricted copies of `.env`, Caddy,
+and the origin certificate pair. Restores must target scratch databases,
+volumes, and directories first. Compare database objects, output content
+digests, and configuration bytes before accepting a backup set. Remove only the
+scratch targets after validation; never overwrite the production volumes as
+part of a drill.
 
 ## Rollback
 
