@@ -31,6 +31,28 @@ def test_compose_requires_deployment_secrets():
     assert "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}" in compose
 
 
+def test_deploy_runbook_requires_compose_v2_and_preserves_postgis():
+    runbook = Path("deploy_runbook.sh").read_text(encoding="utf-8")
+
+    assert 'COMPOSE_CMD=("${DOCKER_CMD[@]}" compose)' in runbook
+    assert "Docker Compose v2 is required" in runbook
+    assert "docker-compose" not in runbook
+    assert 'up -d --wait --wait-timeout "$DEPLOY_WAIT_TIMEOUT" db' in runbook
+    assert "docker run" not in runbook
+    assert "--no-deps --no-build --force-recreate --wait" in runbook
+
+
+def test_redeploy_smoke_check_covers_legacy_failure_and_volume_persistence():
+    smoke = Path("scripts/verify_compose_redeploy.sh").read_text(encoding="utf-8")
+
+    assert 'REDEPLOY_ATTEMPTS:-2' in smoke
+    assert "ContainerConfig" in smoke
+    assert "pg_control_system" in smoke
+    assert "PostGIS cluster changed during redeploy" in smoke
+    assert "dashboard worker db" in smoke
+    assert 'PUBLIC_BASE_URL}/readyz' in smoke
+
+
 def test_session_cookie_secure_defaults_to_true(monkeypatch, tmp_path):
     monkeypatch.setenv("GEOVIS_OUTPUT_ROOT", str(tmp_path))
     monkeypatch.delenv("GEOVIS_SESSION_COOKIE_SECURE", raising=False)
