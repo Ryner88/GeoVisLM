@@ -70,10 +70,21 @@ fi
 
 if [[ -n "${COMPOSE_COMMAND:-}" ]]; then
   read -r -a COMPOSE_CMD <<< "$COMPOSE_COMMAND"
-elif docker-compose version >/dev/null 2>&1; then
-  COMPOSE_CMD=(docker-compose)
+elif docker compose version >/dev/null 2>&1; then
+  if docker ps >/dev/null 2>&1; then
+    COMPOSE_CMD=(docker compose)
+  else
+    COMPOSE_CMD=(sudo docker compose)
+  fi
+elif command -v docker-compose >/dev/null 2>&1; then
+  if docker ps >/dev/null 2>&1; then
+    COMPOSE_CMD=(docker-compose)
+  else
+    COMPOSE_CMD=(sudo docker-compose)
+  fi
 else
-  COMPOSE_CMD=(sudo docker-compose)
+  echo "Docker Compose is not installed. Install the Compose v2 plugin or docker-compose." >&2
+  exit 1
 fi
 
 ensure_secret() {

@@ -8,6 +8,27 @@ Status labels:
 
 ## Completed Work
 
+### `[DONE]` Repair Deployment Entry-Point Compatibility
+
+Removed two local blockers that prevented the main deployment entry point from
+running on the Prime VPS.
+
+Implemented:
+
+- `deploy_main.sh` defaults to the currently checked-out branch, with `main` as
+  the detached-HEAD fallback, instead of requiring the removed `appAuth` branch.
+- `deploy_runbook.sh` prefers Docker Compose v2 through `docker compose`.
+- The runbook retains legacy `docker-compose` compatibility and emits a clear
+  installation error when no Compose implementation is available.
+
+Verified:
+
+- Both deployment scripts pass Bash syntax validation.
+- The repository passes `git diff --check`.
+- `docker compose config --quiet` succeeds.
+- `python3 scripts/validate_docker_deployment.py` succeeds.
+- Live redeploy and persistence verification remain tracked in the active Compose v2 migration task.
+
 ### `[DONE]` Deployment Security Hardening
 
 Finished the deployment security hardening work and validated it against the live VPS deployment.

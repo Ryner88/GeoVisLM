@@ -4,7 +4,8 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$repo_root"
 
-source_branch="${1:-appAuth}"
+current_branch="$(git branch --show-current)"
+source_branch="${1:-${current_branch:-main}}"
 target_branch="${2:-main}"
 website_command="${GEOVIS_DEPLOY_WEBSITE_COMMAND:-}"
 local_deploy_command="${GEOVIS_DEPLOY_LOCAL_COMMAND:-sudo ./deploy_runbook.sh --skip-pull --cache}"

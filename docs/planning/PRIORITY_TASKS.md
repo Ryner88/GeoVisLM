@@ -48,7 +48,7 @@ Current mitigation:
 
 - `deploy_runbook.sh` avoids recreating PostGIS through legacy Compose.
 - The runbook starts or reuses `geovis_lm_db_1` directly with Docker and the persistent `geovis_lm_geovis_postgis` volume.
-- Dashboard and worker are recreated with `docker-compose up -d --no-deps --no-build --force-recreate dashboard worker` after building the shared app image.
+- Dashboard and worker are recreated with the detected Compose runner after building the shared app image.
 
 Remaining work:
 
@@ -62,7 +62,7 @@ Acceptance criteria:
 - Repeated deploys leave `geovis_lm_db_1`, `geovis_lm_dashboard_1`, and `geovis_lm_worker_1` running or healthy.
 - Public login still renders the first-party auth UI and `/readyz` returns ready after redeploy.
 
-### 2. `[TODO]` Migrate VPS Deployment from Legacy `docker-compose` v1 to Compose v2
+### 2. `[IN-PROGRESS]` Migrate VPS Deployment from Legacy `docker-compose` v1 to Compose v2
 
 Goal: remove the legacy Compose 1.29.2 deployment risk that can raise `KeyError: ContainerConfig` during container recreation.
 
@@ -76,16 +76,24 @@ ERROR: for dashboard  "ContainerConfig"
 KeyError: "ContainerConfig"
 ```
 
+Current progress:
+
+- Docker Compose v2 is installed and `docker compose version` succeeds on the VPS.
+- `deploy_runbook.sh` now prefers `docker compose`, retains an explicit legacy
+  `docker-compose` fallback, and reports a clear error when neither is installed.
+- `deploy_main.sh` now defaults its source to the checked-out branch instead of
+  the removed `appAuth` branch.
+- Shell syntax, Compose configuration, and deployment scaffold validation pass.
+
 Remaining work:
 
-- Install or enable Docker Compose v2 on the VPS.
-- Update deployment scripts and docs to prefer `docker compose` when available.
-- Remove or simplify direct-Docker workarounds once Compose v2 is verified.
+- Run repeated live redeploys with Compose v2 and record container and public endpoint health.
+- Remove or simplify direct-Docker workarounds once Compose v2 is verified against the persistent PostGIS deployment.
 - Add a rollback note for preserving the `geovis_lm_geovis_postgis` volume.
 
 Acceptance criteria:
 
-- `docker compose version` works on the VPS.
+- [x] `docker compose version` works on the VPS.
 - Repeated deploys can recreate dashboard and worker without the `ContainerConfig` traceback.
 - PostGIS data survives deploys and container recreation.
 - Deployment documentation clearly states whether Compose v1 fallback is still supported.
