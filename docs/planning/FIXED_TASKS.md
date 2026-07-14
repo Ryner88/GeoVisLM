@@ -8,6 +8,28 @@ Status labels:
 
 ## Completed Work
 
+### `[DONE]` Retire Former GeoVis Deployment
+
+Retired the former GeoVis runtime on the old VPS on `2026-07-14` UTC after the
+Prime observation, production-account, public-path, redeploy-persistence, and
+backup/restore checks completed.
+
+Implemented:
+
+- Removed the former GeoVis containers from the old VPS.
+- Removed the old GeoVis Caddy route so the former host no longer serves the
+  production hostname.
+- Preserved the former PostGIS and output volumes for rollback during the
+  remaining retention period.
+- Left unrelated services hosted on the old VPS active and unchanged.
+
+Verified:
+
+- Prime remains the active public GeoVis deployment.
+- The former runtime and proxy route are no longer active.
+- Rollback data remains available without keeping the retired application
+  exposed or running.
+
 ### `[DONE]` Finalize Prime Account Policy and Production Sign-Off
 
 Formal production sign-off was recorded on `2026-07-13` UTC after the Prime
@@ -36,12 +58,9 @@ Verified:
 - PostGIS, output-volume, and restricted configuration backups were created,
   restored into isolated targets, and verified by object/content comparison.
 - Cloudflare served the public domain and all 20 tagged public probes appeared
-  in Prime logs. Strict former-host zero-traffic confirmation remains part of
-  the separate retirement task because former-host/Cloudflare analytics were
-  not available on Prime.
+  in Prime logs.
 
-Retirement of the former deployment remains a separate priority and still
-requires backup confirmation and explicit approval.
+The former deployment was subsequently retired as recorded above.
 
 ### `[DONE]` Harden Container Recreates and Complete Compose v2 Migration
 

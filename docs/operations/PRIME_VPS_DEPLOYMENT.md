@@ -2,8 +2,9 @@
 
 GeoVis LM is deployed on Prime at `/opt/geovis_lm` with Docker Compose v2. The
 dashboard is published only as `127.0.0.1:8000`; Caddy is the only public web
-entry point. Do not remove the previous deployment or change Cloudflare/DNS
-until the Prime public endpoint passes validation.
+entry point. The former GeoVis runtime and Caddy route on the old VPS were
+retired after Prime passed production validation; its PostGIS and output
+volumes remain preserved for rollback retention.
 
 ## Host and services
 
@@ -156,8 +157,8 @@ Validated on `2026-07-11` UTC through Cloudflare, Ray ID
 - Dashboard, worker, PostGIS, Caddy, firewall, and port checks passed with no
   runtime failures in the validation log window.
 
-Do not retire the former deployment until the observation period completes,
-backups are confirmed, and retirement is explicitly approved.
+The former deployment remained intact through this initial validation and was
+retired only after the later sign-off and backup/restore checks completed.
 
 ## Production sign-off
 
@@ -173,9 +174,10 @@ period that began with the `2026-07-11` public validation. At sign-off:
 - The closed-signup provisioning and recovery policy was documented, and 30
   focused authentication and deployment-security tests passed.
 
-This sign-off approves Prime as the production service. It does not approve
-retirement of the former deployment; that still requires confirmed backups and
-explicit retirement approval.
+This sign-off approved Prime as the production service. At the time, retirement
+of the former deployment remained separately gated on confirmed backups and
+explicit approval; those conditions were satisfied before the retirement
+recorded below.
 
 ### 2026-07-14 sign-off revalidation
 
@@ -198,11 +200,25 @@ migration and exercised on Prime before merge:
   at `192.3.31.132` matched it, and all 20 uniquely tagged public probes were
   present in the Prime dashboard logs.
 
-The public-path sample shows production requests reaching Prime and found no
-sample routed elsewhere. A strict assertion that the former VPS receives zero
-background traffic still requires either former-host access logs or
-authoritative Cloudflare origin analytics; neither is available on Prime. Keep
-former-host retirement as a separate explicitly approved operation.
+The public-path sample showed production requests reaching Prime and found no
+sample routed elsewhere. Former-host retirement was then completed and recorded
+separately below.
+
+## Former deployment retirement
+
+Retirement completed on `2026-07-14` UTC after Prime validation and the isolated
+backup/restore drill passed:
+
+- Former GeoVis containers were removed from the old VPS.
+- The old GeoVis Caddy route was removed.
+- Former PostGIS and output volumes were retained for rollback during the
+  remaining observation/retention period.
+- Other services hosted on the old VPS remain active and were not modified.
+
+The old VPS is no longer a live, immediately switchable GeoVis target. A rollback
+to that host requires recreating the former containers, attaching the preserved
+volumes, restoring and validating its Caddy route, and only then changing
+Cloudflare/DNS traffic.
 
 ## Routine operations
 
@@ -237,8 +253,7 @@ part of a drill.
 
 ## Rollback
 
-For traffic rollback, restore the previous Cloudflare/DNS origin without
-deleting Prime, then verify the former endpoint. To roll Prime back locally:
+For a local Prime application rollback:
 
 ```bash
 cd /opt/geovis_lm
@@ -255,3 +270,9 @@ must remain. Restore `/etc/caddy/Caddyfile` from `/root/geovis-backups/`, run
 `caddy validate`, and reload Caddy if proxy rollback is required. If data must
 be rolled back, restore PostGIS and artifacts from the matching tested backup
 instead of deleting volumes.
+
+For rollback to the retired old VPS, first recreate its GeoVis containers from
+the intended validated commit and attach the preserved former PostGIS and
+output volumes. Restore the old Caddy route, validate local health and data,
+then validate the origin directly before changing Cloudflare/DNS. Do not disturb
+the other services that remain active on that host.
