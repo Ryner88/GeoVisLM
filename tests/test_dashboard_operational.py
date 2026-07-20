@@ -6,6 +6,7 @@ import importlib
 import json
 import re
 import sys
+import warnings
 from pathlib import Path
 
 import pytest
@@ -772,6 +773,18 @@ def test_dem_analysis_adapter_writes_outputs_and_summary(tmp_path):
     assert summary["adapter"] == "dem_terrain"
     assert summary["outputs"]["slope"] == result.outputs["slope"]
     assert "stage=complete" in result.logs
+
+
+def test_load_dem_avoids_numpy_masked_shape_deprecation():
+    from geovis_lm.gis.terrain import load_dem
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        dem, profile, transform, crs = load_dem(Path("data/sample/sample_dem.tif"))
+
+    assert dem.shape == (profile["height"], profile["width"])
+    assert transform == profile["transform"]
+    assert crs is not None
 
 
 def test_dem_analysis_adapter_processes_vector_without_render_when_disabled(tmp_path):

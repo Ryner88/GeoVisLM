@@ -1,13 +1,35 @@
+import warnings
 from pathlib import Path
 
 import numpy as np
 import rasterio
 
 
+NUMPY_SHAPE_DEPRECATION = r"Setting the shape on a NumPy array has been deprecated in NumPy 2\.5\."
+
+
+def read_masked_band(src, index: int = 1) -> np.ma.MaskedArray:
+    # rasterio 1.5.0 triggers NumPy 2.5's deprecated shape setter during reads.
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=NUMPY_SHAPE_DEPRECATION,
+            category=DeprecationWarning,
+        )
+        data = src.read(index, masked=False)
+        mask = src.read_masks(index) == 0
+
+    if np.issubdtype(data.dtype, np.floating):
+        mask |= np.isnan(data)
+
+    nodata = src.nodatavals[index - 1] if src.nodatavals else None
+    return np.ma.array(data, mask=mask, fill_value=nodata, copy=False)
+
+
 def load_dem(path: str | Path):
     path = Path(path)
     with rasterio.open(path) as src:
-        dem = src.read(1, masked=True)
+        dem = read_masked_band(src)
         profile = src.profile.copy()
         transform = src.transform
         crs = src.crs

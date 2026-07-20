@@ -13,6 +13,7 @@ from geovis_lm.gis.terrain import (
     calculate_slope_degrees,
     classify_slope_risk,
     load_dem,
+    read_masked_band,
     save_raster,
 )
 from geovis_lm.gis.vector import (
@@ -102,7 +103,7 @@ def render_overlay_preview(dem_path: Path, clipped_layers: list[tuple[str, Any]]
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with rasterio.open(dem_path) as src:
-        dem = src.read(1, masked=True)
+        dem = read_masked_band(src)
         bounds = src.bounds
 
     fig, ax = plt.subplots(figsize=(8, 6), dpi=120)

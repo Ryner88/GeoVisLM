@@ -12,6 +12,8 @@ import rasterio
 from httpx import ASGITransport, AsyncClient
 from shapely.geometry import LineString, Polygon
 
+from geovis_lm.gis.terrain import read_masked_band
+
 
 def write_river_layer(path: Path) -> Path:
     gdf = gpd.GeoDataFrame(
@@ -38,7 +40,7 @@ def write_fuel_layer(path: Path) -> Path:
 
 def raster_classes(path: Path) -> set[int]:
     with rasterio.open(path) as src:
-        return {int(value) for value in src.read(1).ravel()}
+        return {int(value) for value in read_masked_band(src).filled(0).ravel()}
 
 
 @pytest.fixture()

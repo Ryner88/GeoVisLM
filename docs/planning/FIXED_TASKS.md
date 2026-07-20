@@ -8,6 +8,33 @@ Status labels:
 
 ## Completed Work
 
+### `[DONE]` Trace NumPy 2.5 Raster Read Warnings
+
+Implemented:
+
+- Reproduced the NumPy `2.5.0` deprecation warnings in the dashboard operational suite.
+- Traced the source to rasterio `1.5.0` raster read calls, not GeoVisLM's own NumPy array transformations.
+- Added a shared `read_masked_band()` helper for GeoVisLM raster reads.
+- Applied a narrow, message-specific `DeprecationWarning` filter only around rasterio `read()` and `read_masks()` calls.
+- Updated DEM loading and overlay preview rendering to use the shared helper.
+- Added regression coverage that promotes `DeprecationWarning` to errors around `load_dem()`.
+
+Decision:
+
+- Keep `numpy==2.5.0`.
+- Keep `rasterio==1.5.0`; `pip index versions rasterio` reports it as the latest available release in this environment.
+- Do not add a global pytest warning filter. The filter belongs at the known dependency boundary so unrelated NumPy deprecations remain visible.
+
+Verified:
+
+- `timeout 120 .venv/bin/python -m pytest tests/test_dashboard_operational.py::test_load_dem_avoids_numpy_masked_shape_deprecation -W error::DeprecationWarning -vv`
+- `timeout 300 .venv/bin/python -m pytest -W always -vv`
+
+Notes:
+
+- Failure trace before the fix pointed from `geovis_lm/gis/terrain.py` into `rasterio/_io.pyx`, then NumPy's `numpy/ma/core.py:3505`.
+- Both `src.read(1, masked=False)` and `src.read_masks(1)` trigger the same rasterio/NumPy warning under NumPy `2.5.0`, so replacing GeoVisLM masked-array construction alone was not sufficient.
+
 ### `[DONE]` Retire Former GeoVis Deployment
 
 Retired the former GeoVis runtime on the old VPS on `2026-07-14` UTC after the
