@@ -8,6 +8,23 @@ Status labels:
 
 ## Completed Work
 
+### `[DONE]` Add Model Evaluation Suite
+
+Implemented:
+
+- Added `geovis_lm/eval/workflow_eval.py` for deterministic GeoMiniLM workflow prediction scoring.
+- Added `scripts/evaluate_geominilm.py` to validate expected and predicted JSONL files and write JSON/Markdown reports.
+- Added `outputs/eval/` as the generated report location.
+- Documented the scoring rubric, pass threshold, CLI usage, and known limitations in `docs/GEOMINILM_EVALUATION.md`.
+- Added unit tests for valid, malformed, incomplete, and mismatched prediction records.
+
+Verified:
+
+- `python3 -m py_compile geovis_lm/eval/workflow_eval.py`
+- `python3 scripts/evaluate_geominilm.py --help`
+- `timeout 120 .venv/bin/python -m pytest tests/test_workflow_eval.py -vv`
+- `timeout 120 .venv/bin/python scripts/evaluate_geominilm.py --expected data/geominilm/starter_workflows.jsonl --predictions data/geominilm/starter_workflows.jsonl --output-dir outputs/eval`
+
 ### `[DONE]` Trace NumPy 2.5 Raster Read Warnings
 
 Implemented:

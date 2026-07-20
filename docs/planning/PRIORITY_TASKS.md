@@ -33,7 +33,7 @@ Validation:
 docker compose exec -T dashboard python -m pytest -q
 ```
 
-### 2. `[TODO]` Add Model Evaluation Suite
+### 2. `[DONE]` Add Model Evaluation Suite
 
 Goal: establish a measurable workflow-quality baseline before investing in
 GeoMiniLM training iterations.
@@ -63,6 +63,7 @@ Validation:
 ```bash
 python3 -m py_compile geovis_lm/eval/workflow_eval.py
 python3 scripts/evaluate_geominilm.py --help
+timeout 120 .venv/bin/python -m pytest tests/test_workflow_eval.py -vv
 ```
 
 ### 3. `[TODO]` Train First GeoMiniLM Prototype
