@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 import shutil
 import subprocess
+import tempfile
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -61,16 +63,24 @@ def docker_command() -> Path:
 def run_docker_compose_config(docker_path: Path) -> subprocess.CompletedProcess[str]:
     if docker_path.resolve() not in trusted_docker_paths():
         raise SystemExit(f"Refusing untrusted Docker executable: {docker_path}")
-    result = subprocess.run(
-        ["docker", "compose", "config"],
-        executable=str(docker_path),
-        cwd=PROJECT_ROOT,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        check=False,
-    )
-    return result
+    env = os.environ.copy()
+    auth_token = env.get("GEOVIS_AUTH_TOKEN") or "compose-config-validation-token"
+    postgres_password = env.get("POSTGRES_PASSWORD") or "compose-config-validation-password"
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=PROJECT_ROOT, prefix=".compose-config-", suffix=".env") as env_file:
+        env_file.write(f"GEOVIS_AUTH_TOKEN={auth_token}\n")
+        env_file.write(f"POSTGRES_PASSWORD={postgres_password}\n")
+        env_file.flush()
+        result = subprocess.run(
+            ["docker", "compose", "--env-file", env_file.name, "config"],
+            executable=str(docker_path),
+            cwd=PROJECT_ROOT,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        return result
 
 
 def run_compose_config(docker_path: Path) -> None:
