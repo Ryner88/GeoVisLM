@@ -190,8 +190,29 @@ Docker-capable host validation:
 ```bash
 python3 scripts/validate_docker_deployment.py --compose-config
 docker compose up --build
-docker compose exec -T dashboard python scripts/compose_worker_smoke.py
+docker compose exec -T dashboard python scripts/compose_worker_smoke.py --token "$GEOVIS_AUTH_TOKEN"
 ```
+
+When validating from WSL through Docker Desktop, keep meaningful free space on
+the Windows host drive that stores Docker Desktop's Linux image data. A local
+Compose build on `2026-07-25` failed during final image unpack while `C:` had
+only about `31M` free, then the Docker Desktop engine stopped responding. After
+freeing host space and restarting Docker Desktop, the same cached image unpacked
+successfully and the dashboard, worker, and PostGIS services became healthy.
+
+Recommended local/WSL checks before rerunning a full Compose build:
+
+```bash
+df -h /mnt/c /
+'/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe' info
+'/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe' compose --env-file /tmp/geovis-compose-test.env config
+```
+
+Aim for at least `20GB` free on the host drive before image rebuilds involving
+the Python, PyTorch, and geospatial dependency layers. If `C:` cannot reliably
+keep that much free space, move personal/cache data first, or move Docker
+Desktop's disk image to a real SSD. Do not use Docker factory reset or
+volume-pruning cleanup during validation unless project data loss is acceptable.
 
 Production deployment adds:
 

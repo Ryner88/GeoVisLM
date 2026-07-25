@@ -33,40 +33,7 @@ Validation:
 docker compose exec -T dashboard python -m pytest -q
 ```
 
-### 2. `[DONE]` Add Model Evaluation Suite
-
-Goal: establish a measurable workflow-quality baseline before investing in
-GeoMiniLM training iterations.
-
-Why now: structured evaluation should define correctness before the first model
-prototype is tuned, preventing subjective sample-only assessment.
-
-Build:
-
-* Add `geovis_lm/eval/workflow_eval.py` and
-  `scripts/evaluate_geominilm.py`.
-* Compare expected and predicted JSONL records for required inputs, ordered
-  steps, tool choice, output paths, instruction relevance, and explanation
-  quality.
-* Write JSON and Markdown reports under `outputs/eval/`.
-* Document the scoring rubric, pass thresholds, and known limitations.
-
-Acceptance criteria:
-
-* Expected and predicted JSONL files are validated before scoring.
-* Missing fields, invalid tools, and workflow-step mismatches are reported.
-* A reproducible summary score and pass/fail result are generated.
-* Unit tests cover valid, malformed, incomplete, and mismatched predictions.
-
-Validation:
-
-```bash
-python3 -m py_compile geovis_lm/eval/workflow_eval.py
-python3 scripts/evaluate_geominilm.py --help
-timeout 120 .venv/bin/python -m pytest tests/test_workflow_eval.py -vv
-```
-
-### 3. `[TODO]` Train First GeoMiniLM Prototype
+### 2. `[TODO]` Train First GeoMiniLM Prototype
 
 Goal: train or adapter-tune a small prototype that generates structured GIS and
 visualization workflows from GeoMiniLM examples.
@@ -102,7 +69,7 @@ python3 scripts/train_geominilm.py --help
 python3 scripts/train_geominilm.py --dataset data/geominilm/starter_workflows.jsonl --dry-run
 ```
 
-### 4. `[TODO]` Install and Verify Host GDAL Tools
+### 3. `[TODO]` Install and Verify Host GDAL Tools
 
 Goal: make `gdalinfo` and `ogrinfo` available for host-level production
 diagnostics in addition to the working containerized GIS stack.
@@ -128,7 +95,7 @@ ogrinfo --version
 gdalinfo data/sample/sample_dem.tif
 ```
 
-### 5. `[TODO]` Add Project Sharing and Report Comments
+### 4. `[TODO]` Add Project Sharing and Report Comments
 
 Goal: let owners invite collaborators to individual projects and discuss
 generated reports without weakening current tenant isolation.

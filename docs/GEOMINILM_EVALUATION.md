@@ -57,6 +57,33 @@ The command writes:
 
 Use `--fail-on-threshold` when a training or CI job should fail on a low score.
 
+## Baseline Validation
+
+The deterministic baseline compares the starter workflow file against itself.
+This is a harness sanity check before generated model predictions exist; it
+should pass with a perfect score.
+
+Validated on `2026-07-25`:
+
+```bash
+timeout 120 .venv/bin/python -m py_compile geovis_lm/eval/workflow_eval.py scripts/evaluate_geominilm.py
+timeout 120 .venv/bin/python scripts/evaluate_geominilm.py --help
+timeout 120 .venv/bin/python -m pytest tests/test_workflow_eval.py -vv
+timeout 120 .venv/bin/python scripts/evaluate_geominilm.py \
+  --expected data/geominilm/starter_workflows.jsonl \
+  --predictions data/geominilm/starter_workflows.jsonl \
+  --output-dir outputs/eval \
+  --fail-on-threshold
+```
+
+Result:
+
+- Workflow evaluation tests: `6 passed`
+- Baseline evaluation: `PASS`
+- Summary score: `1.000`
+- Expected/evaluated records: `12/12`
+- Missing predictions: `0`
+
 ## Known Limitations
 
 - Text similarity is token-overlap based, not embedding based.
