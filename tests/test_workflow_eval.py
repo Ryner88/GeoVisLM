@@ -109,6 +109,32 @@ def test_evaluate_records_reports_missing_prediction():
     assert report.records[0].findings == ["missing_prediction"]
 
 
+def test_evaluate_records_allows_partial_tool_match_above_threshold():
+    partial_tool = prediction_record(
+        predicted_workflow=[
+            {
+                "step": 1,
+                "action": "Load the DEM raster and preserve metadata.",
+                "tool": "Use rasterio",
+                "output": "DEM array plus raster metadata.",
+            },
+            {
+                "step": 2,
+                "action": "Calculate slope in degrees.",
+                "tool": "Use numpy gradient operations",
+                "output": "outputs/maps/slope.tif",
+            },
+        ]
+    )
+
+    report = evaluate_records([expected_record()], [partial_tool])
+
+    assert report.passed is True
+    assert report.records[0].score >= 0.75
+    assert "tool_choice_partial" in report.records[0].findings
+    assert "tool_choice_mismatch" in report.records[0].findings
+
+
 def test_evaluate_records_reports_mismatched_prediction():
     mismatched = prediction_record(
         inputs={"dem_path": "wrong.tif"},
@@ -128,8 +154,16 @@ def test_evaluate_records_reports_mismatched_prediction():
     assert report.passed is False
     assert report.records[0].score < 0.75
     assert "workflow_step_count_mismatch" in report.records[0].findings
-    assert "invalid_or_mismatched_tools" in report.records[0].findings
+    assert "invalid_tools" in report.records[0].findings
     assert "output_path_mismatch" in report.records[0].findings
+
+
+@pytest.mark.parametrize("threshold", [-1.0, 1.1, float("nan"), float("inf")])
+def test_evaluate_records_rejects_invalid_pass_threshold(threshold):
+    with pytest.raises(EvaluationInputError) as exc_info:
+        evaluate_records([expected_record()], [prediction_record()], pass_threshold=threshold)
+
+    assert exc_info.value.errors == ["pass threshold must be a finite number from 0 through 1"]
 
 
 def test_evaluate_files_writes_json_and_markdown_reports(tmp_path):

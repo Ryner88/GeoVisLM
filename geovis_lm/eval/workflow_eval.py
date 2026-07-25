@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import math
 from pathlib import Path
 import re
 from typing import Any
@@ -141,6 +142,7 @@ def evaluate_records(
     *,
     pass_threshold: float = DEFAULT_PASS_THRESHOLD,
 ) -> EvaluationReport:
+    _validate_pass_threshold(pass_threshold)
     predictions_by_id = {record["id"]: record for record in prediction_records}
     scores: list[RecordScore] = []
 
@@ -294,11 +296,21 @@ def _record_findings(
     prediction_steps = prediction[_workflow_key(prediction, prediction=True)]
     if len(expected_steps) != len(prediction_steps):
         findings.append("workflow_step_count_mismatch")
-    if _step_field_score(expected_steps, prediction_steps, "tool") < 1.0:
-        findings.append("invalid_or_mismatched_tools")
+    tool_score = _step_field_score(expected_steps, prediction_steps, "tool")
+    if tool_score == 0.0:
+        findings.append("invalid_tools")
+    elif tool_score < 1.0:
+        findings.append("tool_choice_mismatch")
     if _step_field_score(expected_steps, prediction_steps, "output") < 1.0:
         findings.append("output_path_mismatch")
     return findings
+
+
+def _validate_pass_threshold(pass_threshold: float) -> None:
+    if not isinstance(pass_threshold, (int, float)) or not math.isfinite(pass_threshold):
+        raise EvaluationInputError(["pass threshold must be a finite number from 0 through 1"])
+    if pass_threshold < 0.0 or pass_threshold > 1.0:
+        raise EvaluationInputError(["pass threshold must be a finite number from 0 through 1"])
 
 
 def _input_score(expected_inputs: dict[str, Any], predicted_inputs: Any) -> float:
