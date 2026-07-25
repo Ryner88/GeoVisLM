@@ -8,6 +8,60 @@ Status labels:
 
 ## Completed Work
 
+### `[DONE]` Add Model Evaluation Suite
+
+Implemented:
+
+- Added `geovis_lm/eval/workflow_eval.py` for deterministic GeoMiniLM workflow prediction scoring.
+- Added `scripts/evaluate_geominilm.py` to validate expected and predicted JSONL files and write JSON/Markdown reports.
+- Added `outputs/eval/` as the generated report location.
+- Documented the scoring rubric, pass threshold, CLI usage, and known limitations in `docs/GEOMINILM_EVALUATION.md`.
+- Added unit tests for valid, malformed, incomplete, and mismatched prediction records.
+
+Verified:
+
+- `python3 -m py_compile geovis_lm/eval/workflow_eval.py`
+- `python3 scripts/evaluate_geominilm.py --help`
+- `timeout 120 .venv/bin/python -m pytest tests/test_workflow_eval.py -vv`
+- `timeout 120 .venv/bin/python scripts/evaluate_geominilm.py --expected data/geominilm/starter_workflows.jsonl --predictions data/geominilm/starter_workflows.jsonl --output-dir outputs/eval`
+
+Final local verification on `2026-07-25`:
+
+- `timeout 120 .venv/bin/python -m py_compile geovis_lm/eval/workflow_eval.py scripts/evaluate_geominilm.py`
+- `timeout 120 .venv/bin/python scripts/evaluate_geominilm.py --help`
+- `timeout 120 .venv/bin/python -m pytest tests/test_workflow_eval.py -vv` (`6 passed`)
+- `timeout 120 .venv/bin/python scripts/evaluate_geominilm.py --expected data/geominilm/starter_workflows.jsonl --predictions data/geominilm/starter_workflows.jsonl --output-dir outputs/eval --fail-on-threshold` (`PASS`, summary score `1.000`, `12/12` records)
+
+### `[DONE]` Clean Up Local Validation Warnings
+
+Implemented in commit `4f457c2`:
+
+- Removed local validation warning noise without hiding unrelated future warnings.
+- Preserved the narrow rasterio/NumPy dependency-boundary warning handling.
+- Kept the patch unchanged when Docker Desktop failed during image unpack,
+  because the failure was traced to host infrastructure, not application code.
+
+Verified:
+
+- `timeout 300 .venv/bin/python -m pytest -q -W default` (`48 passed`)
+- `timeout 240 .venv/bin/python -W default scripts/local_operational_smoke.py`
+- `python3 scripts/validate_docker_deployment.py`
+- Docker Compose runtime smoke passed on `2026-07-25` after Docker Desktop host
+  disk space was recovered:
+  - `docker compose --env-file /tmp/geovis-compose-test.env config`
+  - `docker compose --env-file /tmp/geovis-compose-test.env up --build -d`
+  - `docker compose --env-file /tmp/geovis-compose-test.env exec -T dashboard python scripts/init_postgis.py --dry-run`
+  - `docker compose --env-file /tmp/geovis-compose-test.env exec -T dashboard python scripts/compose_worker_smoke.py --token local-compose-token`
+
+Notes:
+
+- Docker Desktop originally failed with corrupted/incomplete layer symptoms and
+  later `input/output error`/`EOF` during final image unpack while the Windows
+  host drive was full.
+- The same Compose path passed after freeing space and restarting Docker
+  Desktop, confirming the blocker was image-store infrastructure rather than an
+  application regression.
+
 ### `[DONE]` Trace NumPy 2.5 Raster Read Warnings
 
 Implemented:

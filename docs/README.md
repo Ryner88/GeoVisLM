@@ -8,6 +8,7 @@
 - `operations/ACCOUNT_POLICY.md`: production signup, provisioning, recovery, and account review policy
 - `operations/TEST_COVERAGE_PLAN.md`: upload, API, failure, GIS, report, storage, and security test matrix
 - `storage/`: database and PostGIS schema notes
+- `GEOMINILM_EVALUATION.md`: GeoMiniLM workflow prediction scoring rubric and CLI usage
 - `diagrams/`: PlantUML sources and exported UML images
 - `qgis/`: QGIS screenshots and map export placeholders
 - `QGIS_WORKFLOW.md`: terrain output styling and export workflow

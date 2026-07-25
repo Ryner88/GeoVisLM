@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import subprocess
 import sys
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from geovis_lm.dashboard.operations import (
     set_user_active,
     set_user_password,
 )
+from scripts import local_operational_smoke
 from scripts import validate_docker_deployment
 
 
@@ -98,6 +100,65 @@ def test_docker_command_rejects_untrusted_path(monkeypatch, tmp_path):
 
     with pytest.raises(SystemExit, match="Refusing untrusted Docker executable"):
         validate_docker_deployment.docker_command()
+
+
+def test_compose_config_validator_supplies_local_placeholder_secrets(monkeypatch, tmp_path):
+    docker = tmp_path / "docker"
+    docker.write_text("#!/bin/sh\n", encoding="utf-8")
+    captured = {}
+
+    monkeypatch.delenv("GEOVIS_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("POSTGRES_PASSWORD", raising=False)
+    monkeypatch.setattr(validate_docker_deployment, "trusted_docker_paths", lambda: {docker.resolve()})
+
+    def run(command, **kwargs):
+        captured["command"] = command
+        captured["env"] = kwargs["env"]
+        captured["env_file_text"] = Path(command[3]).read_text(encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(validate_docker_deployment.subprocess, "run", run)
+
+    result = validate_docker_deployment.run_docker_compose_config(docker)
+
+    assert result.returncode == 0
+    assert captured["command"][:3] == ["docker", "compose", "--env-file"]
+    assert captured["command"][4:] == ["config"]
+    assert "GEOVIS_AUTH_TOKEN=compose-config-validation-token" in captured["env_file_text"]
+    assert "POSTGRES_PASSWORD=compose-config-validation-password" in captured["env_file_text"]
+
+
+def test_local_operational_smoke_closes_server_output_pipe():
+    class OutputPipe:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    class Process:
+        def __init__(self) -> None:
+            self.stdout = OutputPipe()
+            self.terminated = False
+            self.waited = False
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def wait(self, timeout: int) -> None:
+            assert timeout == 10
+            self.waited = True
+
+        def kill(self) -> None:
+            raise AssertionError("kill should not be called when graceful shutdown succeeds")
+
+    process = Process()
+
+    local_operational_smoke.stop_process(process)
+
+    assert process.terminated is True
+    assert process.waited is True
+    assert process.stdout.closed is True
 
 
 def test_logout_clears_session_cookie_with_secure_attributes(monkeypatch, tmp_path):

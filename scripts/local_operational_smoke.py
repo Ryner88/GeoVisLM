@@ -76,6 +76,17 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def stop_process(process: subprocess.Popen) -> None:
+    process.terminate()
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=10)
+    if process.stdout:
+        process.stdout.close()
+
+
 def main() -> None:
     args = parse_args()
     port = args.port or find_port()
@@ -162,11 +173,7 @@ def main() -> None:
             print(process.stdout.read(), file=sys.stderr)
         raise
     finally:
-        process.terminate()
-        try:
-            process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            process.kill()
+        stop_process(process)
         if not args.keep_output and args.output_root is None:
             import shutil
 

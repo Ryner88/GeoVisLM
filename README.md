@@ -95,6 +95,8 @@ Starter instruction data for the planned GeoMiniLM workflow model lives in
 - `data/geominilm/README.md` documents the JSONL schema and authoring rules.
 - `data/geominilm/starter_workflows.jsonl` includes seed GIS, QGIS, ParaView,
   and reporting workflow examples.
+- `docs/GEOMINILM_EVALUATION.md` documents the deterministic workflow-quality
+  evaluator and report format.
 
 ## Report Generation
 
