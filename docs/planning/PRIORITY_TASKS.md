@@ -9,31 +9,7 @@ Status labels:
 
 ## Current Priority Queue
 
-### 1. `[TODO]` Investigate NumPy 2.5 MaskedArray Deprecation Warnings
-
-Goal: keep the production test suite warning-clean and prevent a future NumPy
-upgrade from turning current geospatial warnings into failures.
-
-Why now: all 39 tests pass, but 19 NumPy 2.5 deprecation warnings recur in the
-dashboard and risk-workflow tests. Dependency compatibility is the most
-immediate maintenance risk in the otherwise healthy production baseline.
-
-Acceptance criteria:
-
-* Identify whether each warning originates in GeoVisLM code or a third-party
-  geospatial dependency.
-* Update GeoVisLM array handling when applicable.
-* For dependency warnings, document the upstream source and a pin/upgrade plan.
-* The suite runs without unexpected NumPy warnings, or narrowly scoped filters
-  include a documented justification and removal condition.
-
-Validation:
-
-```bash
-docker compose exec -T dashboard python -m pytest -q
-```
-
-### 2. `[TODO]` Train First GeoMiniLM Prototype
+### 1. `[TODO]` Train First GeoMiniLM Prototype
 
 Goal: train or adapter-tune a small prototype that generates structured GIS and
 visualization workflows from GeoMiniLM examples.
