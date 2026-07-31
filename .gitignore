@@ -11,6 +11,9 @@ outputs/reports/*
 outputs/runs/*
 outputs/qgis/*
 outputs/eval/*
+outputs/models/*
+outputs/models/geominilm/*
+outputs/model_samples/*
 
 !data/raw/.gitkeep
 !data/processed/.gitkeep
@@ -20,6 +23,12 @@ outputs/eval/*
 !outputs/runs/.gitkeep
 !outputs/qgis/.gitkeep
 !outputs/eval/.gitkeep
+!outputs/models/
+!outputs/models/.gitkeep
+!outputs/models/geominilm/
+!outputs/models/geominilm/.gitkeep
+!outputs/model_samples/
+!outputs/model_samples/.gitkeep
 
 .env
 *.qgz

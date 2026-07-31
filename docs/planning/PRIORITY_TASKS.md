@@ -9,7 +9,7 @@ Status labels:
 
 ## Current Priority Queue
 
-### 1. `[TODO]` Train First GeoMiniLM Prototype
+### 1. `[IN-PROGRESS]` Train First GeoMiniLM Prototype
 
 Goal: train or adapter-tune a small prototype that generates structured GIS and
 visualization workflows from GeoMiniLM examples.
@@ -28,6 +28,14 @@ Build:
 * Store models under `outputs/models/geominilm/` and predictions under
   `outputs/model_samples/`.
 * Evaluate at least one generated prediction with the priority-2 evaluator.
+
+Progress:
+
+* Data-pipeline slice is complete: dataset loading, schema validation,
+  preprocessing, CLI help, and no-download dry run.
+* Next slice: implement real local training, save a model checkpoint, run
+  inference, and evaluate generated predictions against the established
+  baseline.
 
 Acceptance criteria:
 
