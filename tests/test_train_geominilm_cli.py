@@ -88,3 +88,45 @@ def test_train_geominilm_training_writes_checkpoint_predictions_and_comparison(t
     assert report["passed"] is True
     assert comparison["summary_delta"] == 0.0
     assert "GeoMiniLM training complete" in result.stdout
+
+
+def test_train_geominilm_held_out_eval_writes_excluded_fold_reports(tmp_path):
+    output_dir = tmp_path / "model"
+    predictions_dir = tmp_path / "predictions"
+    eval_dir = tmp_path / "eval"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/train_geominilm.py",
+            "--dataset",
+            "data/geominilm/starter_workflows.jsonl",
+            "--output-dir",
+            str(output_dir),
+            "--predictions-dir",
+            str(predictions_dir),
+            "--eval-dir",
+            str(eval_dir),
+            "--held-out-eval",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    metadata = json.loads((output_dir / "heldout_metadata.json").read_text(encoding="utf-8"))
+    comparison = json.loads((eval_dir / "baseline_comparison.json").read_text(encoding="utf-8"))
+    predictions = [
+        json.loads(line)
+        for line in (predictions_dir / "heldout_predictions.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+
+    assert metadata["training_status"] == "held_out_complete"
+    assert metadata["training"]["fold_count"] == 12
+    assert comparison["heldout_summary_score"] < comparison["baseline_summary_score"]
+    assert comparison["failed_examples"]
+    assert (eval_dir / "evaluation_report.md").exists()
+    for prediction in predictions:
+        assert prediction["id"] not in prediction["fold_training_record_ids"]
+        assert prediction["source_checkpoint_record_id"] != prediction["id"]
+    assert "GeoMiniLM held-out evaluation complete" in result.stdout

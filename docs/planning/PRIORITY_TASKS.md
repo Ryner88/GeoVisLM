@@ -9,26 +9,38 @@ Status labels:
 
 ## Current Priority Queue
 
-### 1. `[TODO]` Add Held-Out GeoMiniLM Evaluation
+### 1. `[IN-PROGRESS]` Improve GeoMiniLM Held-Out Performance
 
-Goal: measure GeoMiniLM prototype generalization with held-out or leave-one-out
-workflow evaluation instead of scoring only on the 12 training records.
+Goal: improve GeoMiniLM generalization after leave-one-out evaluation showed
+the first nearest-neighbor prototype does not generalize beyond the starter
+training records.
 
-Why now: the first prototype validates the end-to-end train/checkpoint/infer
-contract, but the saturated `1.000` training-set score does not prove
-generalization.
+Why now: the held-out evaluation is now complete and produced the expected
+signal: training-set score `1.0000`, held-out score `0.4943`, failed examples
+`12/12`. The conclusion is that the nearest-neighbor prototype memorizes the
+starter dataset and does not yet generalize.
 
 Acceptance criteria:
 
-* Add a held-out split or leave-one-out evaluation mode for GeoMiniLM examples.
-* Generate predictions for records excluded from each training fold.
-* Compare held-out scores against the dry-run and training-set baselines.
-* Document limitations from the tiny starter dataset.
+* Expand the 12-record starter dataset before increasing model complexity.
+* Stratify examples by domain, workflow type, inputs, tools, and output shapes.
+* Add enough near-neighbor and contrastive examples to make held-out retrieval
+  less brittle.
+* Relabel or replace the `1.0000` dry-run baseline if it derives predictions
+  from expected outputs; it is not an honest generalization benchmark.
+* Track held-out score, training-set score, baseline score, delta, and
+  per-example failures after each dataset expansion.
+
+Progress:
+
+* Prioritize expanding and stratifying data over increasing model complexity.
+* Treat the current held-out result as the baseline for improvement:
+  `0.4943` held-out score, `12/12` failed examples.
 
 Validation:
 
 ```bash
-python3 scripts/train_geominilm.py --dataset data/geominilm/starter_workflows.jsonl
+python3 scripts/train_geominilm.py --dataset data/geominilm/starter_workflows.jsonl --held-out-eval
 ```
 
 ### 2. `[TODO]` Install and Verify Host GDAL Tools

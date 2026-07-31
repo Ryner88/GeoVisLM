@@ -27,6 +27,7 @@ from geovis_lm.model.dataset import (  # noqa: E402
 from geovis_lm.model.prototype import (  # noqa: E402
     GeoMiniLMPrototype,
     compare_reports,
+    run_leave_one_out_evaluation,
     train_and_save_checkpoint,
     write_comparison_report,
 )
@@ -71,19 +72,32 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Validate and preprocess without downloading or training a model.",
     )
+    parser.add_argument(
+        "--held-out-eval",
+        action="store_true",
+        help="Run leave-one-out evaluation, excluding each evaluated record from its fold checkpoint.",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     try:
-        artifacts = run_dry_run(args) if args.dry_run else run_training(args)
+        if args.held_out_eval:
+            artifacts = run_held_out_evaluation(args)
+            mode = "GeoMiniLM held-out evaluation complete"
+        elif args.dry_run:
+            artifacts = run_dry_run(args)
+            mode = "GeoMiniLM dry run complete"
+        else:
+            artifacts = run_training(args)
+            mode = "GeoMiniLM training complete"
     except EvaluationInputError as exc:
         for error in exc.errors:
             print(error, file=sys.stderr)
         raise SystemExit(2) from exc
 
-    print("GeoMiniLM dry run complete" if args.dry_run else "GeoMiniLM training complete")
+    print(mode)
     print(f"Records: {artifacts['summary']['total_records']}")
     print(f"Preprocessed data: {artifacts['preprocessed_path']}")
     print(f"Metadata: {artifacts['metadata_path']}")
@@ -91,6 +105,9 @@ def main() -> None:
     print(f"Evaluation: {artifacts['evaluation_json_path']}")
     if "checkpoint_path" in artifacts:
         print(f"Checkpoint: {artifacts['checkpoint_path']}")
+        print(f"Baseline comparison: {artifacts['comparison_json_path']}")
+    if "fold_checkpoint_dir" in artifacts:
+        print(f"Fold checkpoints: {artifacts['fold_checkpoint_dir']}")
         print(f"Baseline comparison: {artifacts['comparison_json_path']}")
 
 
@@ -184,9 +201,73 @@ def run_training(args: argparse.Namespace) -> dict[str, object]:
     }
 
 
-def _eval_dir(args: argparse.Namespace, *, dry_run: bool) -> Path:
+def run_held_out_evaluation(args: argparse.Namespace) -> dict[str, object]:
+    examples = load_geominilm_dataset(args.dataset)
+    pairs = preprocess_examples(examples)
+    summary = summarize_examples(examples)
+
+    preprocessed_path = write_preprocessed_jsonl(pairs, args.output_dir / "training_pairs.jsonl")
+    heldout_result = run_leave_one_out_evaluation(
+        examples,
+        args.output_dir / "heldout_folds",
+        model_name=args.model_name,
+    )
+    predictions_path = write_jsonl_records(heldout_result.predictions, args.predictions_dir / "heldout_predictions.jsonl")
+    eval_dir = _eval_dir(args, dry_run=False, held_out=True)
+    evaluation_json_path = write_json_report(heldout_result.heldout_report, eval_dir / "evaluation_report.json")
+    evaluation_markdown_path = write_markdown_report(heldout_result.heldout_report, eval_dir / "evaluation_report.md")
+    comparison_json_path, comparison_markdown_path = write_comparison_report(
+        heldout_result.comparison,
+        eval_dir / "baseline_comparison.json",
+        eval_dir / "baseline_comparison.md",
+        trained_label="heldout",
+    )
+    metadata_path = write_metadata(
+        args.output_dir / "heldout_metadata.json",
+        dataset_path=args.dataset,
+        model_name=args.model_name,
+        summary=summary.to_dict(),
+        training_status="held_out_complete",
+        dry_run=False,
+        training={
+            "algorithm": "leave_one_out_tfidf_nearest_neighbor",
+            "fold_count": len(heldout_result.folds),
+            "folds": [
+                {
+                    "heldout_record_id": fold.record_id,
+                    "checkpoint_path": str(fold.checkpoint_path),
+                    "training_record_ids": fold.training_record_ids,
+                    "source_checkpoint_record_id": fold.prediction.get("source_checkpoint_record_id"),
+                }
+                for fold in heldout_result.folds
+            ],
+        },
+        evaluation={
+            "heldout_summary_score": heldout_result.comparison["heldout_summary_score"],
+            "baseline_summary_score": heldout_result.comparison["baseline_summary_score"],
+            "summary_delta": heldout_result.comparison["summary_delta"],
+            "failed_examples": heldout_result.comparison["failed_examples"],
+        },
+    )
+
+    return {
+        "summary": summary.to_dict(),
+        "preprocessed_path": preprocessed_path,
+        "metadata_path": metadata_path,
+        "fold_checkpoint_dir": args.output_dir / "heldout_folds",
+        "predictions_path": predictions_path,
+        "evaluation_json_path": evaluation_json_path,
+        "evaluation_markdown_path": evaluation_markdown_path,
+        "comparison_json_path": comparison_json_path,
+        "comparison_markdown_path": comparison_markdown_path,
+    }
+
+
+def _eval_dir(args: argparse.Namespace, *, dry_run: bool, held_out: bool = False) -> Path:
     if args.eval_dir is not None:
         return args.eval_dir
+    if held_out:
+        return Path("outputs/eval/geominilm_heldout")
     return Path("outputs/eval/geominilm_dry_run" if dry_run else "outputs/eval/geominilm_training")
 
 

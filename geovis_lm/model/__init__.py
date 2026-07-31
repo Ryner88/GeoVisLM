@@ -13,8 +13,11 @@ from geovis_lm.model.dataset import (
 )
 from geovis_lm.model.prototype import (
     GeoMiniLMPrototype,
+    HeldOutEvaluationResult,
+    HeldOutFoldResult,
     TrainingResult,
     compare_reports,
+    run_leave_one_out_evaluation,
     write_comparison_report,
 )
 
@@ -25,8 +28,11 @@ __all__ = [
     "build_baseline_predictions",
     "compare_reports",
     "GeoMiniLMPrototype",
+    "HeldOutEvaluationResult",
+    "HeldOutFoldResult",
     "load_geominilm_dataset",
     "preprocess_examples",
+    "run_leave_one_out_evaluation",
     "summarize_examples",
     "TrainingResult",
     "write_comparison_report",

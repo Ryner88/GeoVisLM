@@ -8,6 +8,7 @@ import re
 from typing import Any
 
 from geovis_lm.eval.workflow_eval import EvaluationReport
+from geovis_lm.eval.workflow_eval import evaluate_records
 from geovis_lm.model.dataset import GeoMiniLMExample, TrainingPair, build_prompt, preprocess_examples
 
 
@@ -18,6 +19,23 @@ CHECKPOINT_VERSION = 1
 class TrainingResult:
     checkpoint_path: Path
     metadata: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class HeldOutFoldResult:
+    record_id: str
+    checkpoint_path: Path
+    training_record_ids: list[str]
+    prediction: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class HeldOutEvaluationResult:
+    predictions: list[dict[str, Any]]
+    heldout_report: EvaluationReport
+    baseline_report: EvaluationReport
+    comparison: dict[str, Any]
+    folds: list[HeldOutFoldResult]
 
 
 class GeoMiniLMPrototype:
@@ -120,7 +138,65 @@ def train_and_save_checkpoint(
     return TrainingResult(checkpoint_path=saved_path, metadata=model.metadata(examples))
 
 
-def compare_reports(trained: EvaluationReport, baseline: EvaluationReport) -> dict[str, Any]:
+def run_leave_one_out_evaluation(
+    examples: list[GeoMiniLMExample],
+    checkpoint_dir: Path,
+    *,
+    model_name: str = "geominilm-token-retrieval-v1",
+) -> HeldOutEvaluationResult:
+    if len(examples) < 2:
+        raise ValueError("Leave-one-out evaluation requires at least two examples")
+
+    predictions = []
+    folds = []
+    for heldout in examples:
+        training_examples = [example for example in examples if example.id != heldout.id]
+        checkpoint_path = checkpoint_dir / heldout.id / "checkpoint.json"
+        training_result = train_and_save_checkpoint(training_examples, checkpoint_path, model_name=model_name)
+        loaded_model = GeoMiniLMPrototype.load(training_result.checkpoint_path)
+        prediction = loaded_model.predict(heldout)
+        prediction["heldout_record_id"] = heldout.id
+        prediction["fold_training_record_ids"] = [example.id for example in training_examples]
+        predictions.append(prediction)
+        folds.append(
+            HeldOutFoldResult(
+                record_id=heldout.id,
+                checkpoint_path=training_result.checkpoint_path,
+                training_record_ids=[example.id for example in training_examples],
+                prediction=prediction,
+            )
+        )
+
+    expected_records = [example.to_record() for example in examples]
+    heldout_report = evaluate_records(expected_records, predictions)
+    baseline_report = evaluate_records(expected_records, _oracle_baseline_predictions(examples))
+    comparison = compare_reports(heldout_report, baseline_report, trained_label="heldout")
+    comparison["fold_count"] = len(folds)
+    comparison["failed_examples"] = [
+        {
+            "id": record.record_id,
+            "score": round(record.score, 4),
+            "findings": record.findings,
+            "source_checkpoint_record_id": _prediction_source(predictions, record.record_id),
+        }
+        for record in heldout_report.records
+        if not record.passed or record.findings
+    ]
+    return HeldOutEvaluationResult(
+        predictions=predictions,
+        heldout_report=heldout_report,
+        baseline_report=baseline_report,
+        comparison=comparison,
+        folds=folds,
+    )
+
+
+def compare_reports(
+    trained: EvaluationReport,
+    baseline: EvaluationReport,
+    *,
+    trained_label: str = "trained",
+) -> dict[str, Any]:
     trained_records = {record.record_id: record for record in trained.records}
     baseline_records = {record.record_id: record for record in baseline.records}
     record_deltas = []
@@ -130,44 +206,91 @@ def compare_reports(trained: EvaluationReport, baseline: EvaluationReport) -> di
         record_deltas.append(
             {
                 "id": record_id,
-                "trained_score": round(trained_score, 4),
+                f"{trained_label}_score": round(trained_score, 4),
                 "baseline_score": round(baseline_score, 4),
                 "delta": round(trained_score - baseline_score, 4),
+                "findings": trained_records[record_id].findings,
             }
         )
     return {
-        "trained_summary_score": round(trained.summary_score, 4),
+        f"{trained_label}_summary_score": round(trained.summary_score, 4),
         "baseline_summary_score": round(baseline.summary_score, 4),
         "summary_delta": round(trained.summary_score - baseline.summary_score, 4),
-        "trained_passed": trained.passed,
+        f"{trained_label}_passed": trained.passed,
         "baseline_passed": baseline.passed,
         "record_deltas": record_deltas,
     }
 
 
-def write_comparison_report(comparison: dict[str, Any], json_path: Path, markdown_path: Path) -> tuple[Path, Path]:
+def write_comparison_report(
+    comparison: dict[str, Any],
+    json_path: Path,
+    markdown_path: Path,
+    *,
+    trained_label: str = "trained",
+) -> tuple[Path, Path]:
     json_path.parent.mkdir(parents=True, exist_ok=True)
     markdown_path.parent.mkdir(parents=True, exist_ok=True)
     json_path.write_text(json.dumps(comparison, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    trained_summary_key = f"{trained_label}_summary_score"
+    trained_passed_key = f"{trained_label}_passed"
+    title_label = _display_label(trained_label)
     lines = [
-        "# GeoMiniLM Baseline Comparison",
+        f"# GeoMiniLM {title_label} Baseline Comparison",
         "",
-        f"- Trained summary score: {comparison['trained_summary_score']:.3f}",
+        f"- {title_label} summary score: {comparison[trained_summary_key]:.3f}",
         f"- Dry-run baseline score: {comparison['baseline_summary_score']:.3f}",
         f"- Summary delta: {comparison['summary_delta']:.3f}",
-        f"- Trained result: {'PASS' if comparison['trained_passed'] else 'FAIL'}",
+        f"- {title_label} result: {'PASS' if comparison[trained_passed_key] else 'FAIL'}",
         f"- Baseline result: {'PASS' if comparison['baseline_passed'] else 'FAIL'}",
         "",
-        "| ID | Trained | Baseline | Delta |",
-        "| --- | ---: | ---: | ---: |",
+        f"| ID | {title_label} | Baseline | Delta | Findings |",
+        "| --- | ---: | ---: | ---: | --- |",
     ]
     for record in comparison["record_deltas"]:
+        score_key = f"{trained_label}_score"
+        findings = ", ".join(record.get("findings", [])) or "none"
         lines.append(
-            f"| {record['id']} | {record['trained_score']:.3f} | "
-            f"{record['baseline_score']:.3f} | {record['delta']:.3f} |"
+            f"| {record['id']} | {record[score_key]:.3f} | "
+            f"{record['baseline_score']:.3f} | {record['delta']:.3f} | {findings} |"
         )
+    if comparison.get("failed_examples"):
+        lines.extend(["", "## Failed Examples", ""])
+        for failure in comparison["failed_examples"]:
+            findings = ", ".join(failure["findings"]) or "none"
+            lines.append(
+                f"- `{failure['id']}` score `{failure['score']:.3f}` from "
+                f"`{failure['source_checkpoint_record_id']}`: {findings}"
+            )
     markdown_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return json_path, markdown_path
+
+
+def _oracle_baseline_predictions(examples: list[GeoMiniLMExample]) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": example.id,
+            "domain": example.domain,
+            "instruction": example.instruction,
+            "inputs": example.inputs,
+            "predicted_workflow": example.expected_workflow,
+            "explanation": example.explanation,
+        }
+        for example in examples
+    ]
+
+
+def _prediction_source(predictions: list[dict[str, Any]], record_id: str) -> str | None:
+    for prediction in predictions:
+        if prediction["id"] == record_id:
+            return prediction.get("source_checkpoint_record_id")
+    return None
+
+
+def _display_label(label: str) -> str:
+    if label == "heldout":
+        return "Held-Out"
+    return label.replace("_", " ").title()
 
 
 def _fit_vectorizer(pairs: list[TrainingPair]) -> tuple[list[str], dict[str, float]]:

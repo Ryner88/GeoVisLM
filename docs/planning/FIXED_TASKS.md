@@ -8,6 +8,37 @@ Status labels:
 
 ## Completed Work
 
+### `[DONE]` Add Held-Out GeoMiniLM Evaluation
+
+Implemented:
+
+- Added leave-one-out GeoMiniLM evaluation with `--held-out-eval`.
+- Trained each fold checkpoint without the evaluated example.
+- Reloaded each fold checkpoint for inference before generating predictions.
+- Reported held-out score, dry-run baseline score, delta, and per-example
+  failures.
+- Wrote held-out predictions, fold checkpoints, evaluation reports, and
+  baseline comparison artifacts under the existing output locations.
+- Added focused tests proving held-out examples are excluded from fold training
+  and that failed examples are surfaced.
+
+Verified:
+
+- `python3 -m py_compile geovis_lm/model/prototype.py scripts/train_geominilm.py`
+- `python3 scripts/train_geominilm.py --dataset data/geominilm/starter_workflows.jsonl --held-out-eval`
+- `timeout 120 .venv/bin/python -m pytest tests/test_geominilm_prototype.py tests/test_train_geominilm_cli.py -vv` (`7 passed`)
+- `timeout 300 .venv/bin/python -m pytest -q` (`64 passed`)
+
+Findings:
+
+- Training-set score: `1.0000`
+- Held-out score: `0.4943`
+- Failed examples: `12/12`
+- Conclusion: the nearest-neighbor prototype memorizes the starter dataset and
+  does not yet generalize.
+- The `1.0000` dry-run baseline derives predictions from expected outputs, so
+  it is an oracle/sanity baseline, not an honest generalization benchmark.
+
 ### `[DONE]` Train First GeoMiniLM Prototype
 
 Implemented:

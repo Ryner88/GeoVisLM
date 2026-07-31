@@ -5,7 +5,12 @@ from pathlib import Path
 
 from geovis_lm.eval.workflow_eval import evaluate_records, load_jsonl
 from geovis_lm.model.dataset import build_baseline_predictions, load_geominilm_dataset
-from geovis_lm.model.prototype import GeoMiniLMPrototype, compare_reports, train_and_save_checkpoint
+from geovis_lm.model.prototype import (
+    GeoMiniLMPrototype,
+    compare_reports,
+    run_leave_one_out_evaluation,
+    train_and_save_checkpoint,
+)
 
 
 STARTER_DATASET = Path("data/geominilm/starter_workflows.jsonl")
@@ -44,6 +49,23 @@ def test_compare_reports_records_trained_vs_dry_run_baseline():
     assert comparison["baseline_passed"] is True
     assert comparison["summary_delta"] == 0.0
     assert len(comparison["record_deltas"]) == len(examples)
+
+
+def test_leave_one_out_evaluation_excludes_heldout_examples_from_training(tmp_path):
+    examples = load_geominilm_dataset(STARTER_DATASET)
+    result = run_leave_one_out_evaluation(examples, tmp_path / "folds")
+
+    assert len(result.folds) == len(examples)
+    assert result.baseline_report.summary_score == 1.0
+    assert result.heldout_report.summary_score < result.baseline_report.summary_score
+    assert result.comparison["heldout_summary_score"] == round(result.heldout_report.summary_score, 4)
+    assert result.comparison["baseline_summary_score"] == 1.0
+    assert result.comparison["summary_delta"] < 0.0
+    assert result.comparison["failed_examples"]
+    for fold in result.folds:
+        assert fold.record_id not in fold.training_record_ids
+        assert fold.prediction["source_checkpoint_record_id"] != fold.record_id
+        assert fold.checkpoint_path.exists()
 
 
 def write_jsonl(path: Path, records: list[dict]) -> Path:
