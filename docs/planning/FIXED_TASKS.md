@@ -8,6 +8,35 @@ Status labels:
 
 ## Completed Work
 
+### `[DONE]` Train First GeoMiniLM Prototype
+
+Implemented:
+
+- Added a deterministic local GeoMiniLM prototype that trains on the 12
+  validated starter workflows using a TF-IDF nearest-neighbor checkpoint.
+- Saved reproducible checkpoint and metadata artifacts under
+  `outputs/models/geominilm/`.
+- Loaded the checkpoint for inference and generated schema-valid predictions
+  under `outputs/model_samples/`.
+- Evaluated trained predictions with the existing GeoMiniLM evaluation suite.
+- Compared trained results against the dry-run baseline.
+- Added focused tests for checkpoint save/load, inference, schema validation,
+  CLI training, and baseline comparison.
+
+Verified:
+
+- `python3 -m py_compile geovis_lm/model/dataset.py geovis_lm/model/prototype.py scripts/train_geominilm.py`
+- `python3 scripts/train_geominilm.py --dataset data/geominilm/starter_workflows.jsonl --dry-run`
+- `python3 scripts/train_geominilm.py --dataset data/geominilm/starter_workflows.jsonl`
+- `timeout 300 .venv/bin/python -m pytest -q` (`62 passed`)
+
+Notes:
+
+- The `1.000` trained result is an end-to-end validation over the same 12
+  workflows used for training, not evidence of generalization.
+- Held-out or leave-one-out evaluation is tracked as a separate follow-up in
+  `docs/planning/PRIORITY_TASKS.md`.
+
 ### `[DONE]` Add Model Evaluation Suite
 
 Implemented:

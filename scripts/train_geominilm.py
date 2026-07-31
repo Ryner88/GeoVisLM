@@ -24,10 +24,16 @@ from geovis_lm.model.dataset import (  # noqa: E402
     write_jsonl_records,
     write_preprocessed_jsonl,
 )
+from geovis_lm.model.prototype import (  # noqa: E402
+    GeoMiniLMPrototype,
+    compare_reports,
+    train_and_save_checkpoint,
+    write_comparison_report,
+)
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Prepare and dry-run the GeoMiniLM prototype training flow.")
+    parser = argparse.ArgumentParser(description="Train or dry-run the local GeoMiniLM prototype.")
     parser.add_argument(
         "--dataset",
         type=Path,
@@ -49,13 +55,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--eval-dir",
         type=Path,
-        default=Path("outputs/eval/geominilm_dry_run"),
-        help="Directory for dry-run evaluation reports.",
+        default=None,
+        help=(
+            "Directory for evaluation reports. Defaults to outputs/eval/geominilm_dry_run "
+            "with --dry-run and outputs/eval/geominilm_training otherwise."
+        ),
     )
     parser.add_argument(
         "--model-name",
-        default="geominilm-local-baseline",
-        help="Prototype model or adapter name recorded in dry-run metadata.",
+        default="geominilm-token-retrieval-v1",
+        help="Prototype model or adapter name recorded in metadata.",
     )
     parser.add_argument(
         "--dry-run",
@@ -67,22 +76,22 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    if not args.dry_run:
-        raise SystemExit("Only --dry-run is implemented for the local GeoMiniLM prototype.")
-
     try:
-        artifacts = run_dry_run(args)
+        artifacts = run_dry_run(args) if args.dry_run else run_training(args)
     except EvaluationInputError as exc:
         for error in exc.errors:
             print(error, file=sys.stderr)
         raise SystemExit(2) from exc
 
-    print("GeoMiniLM dry run complete")
+    print("GeoMiniLM dry run complete" if args.dry_run else "GeoMiniLM training complete")
     print(f"Records: {artifacts['summary']['total_records']}")
     print(f"Preprocessed data: {artifacts['preprocessed_path']}")
     print(f"Metadata: {artifacts['metadata_path']}")
     print(f"Predictions: {artifacts['predictions_path']}")
     print(f"Evaluation: {artifacts['evaluation_json_path']}")
+    if "checkpoint_path" in artifacts:
+        print(f"Checkpoint: {artifacts['checkpoint_path']}")
+        print(f"Baseline comparison: {artifacts['comparison_json_path']}")
 
 
 def run_dry_run(args: argparse.Namespace) -> dict[str, object]:
@@ -96,13 +105,16 @@ def run_dry_run(args: argparse.Namespace) -> dict[str, object]:
         dataset_path=args.dataset,
         model_name=args.model_name,
         summary=summary.to_dict(),
+        training_status="not_started",
+        dry_run=True,
     )
 
     predictions = build_baseline_predictions(examples)
     predictions_path = write_jsonl_records(predictions, args.predictions_dir / "dry_run_predictions.jsonl")
     report = evaluate_records([example.to_record() for example in examples], predictions)
-    evaluation_json_path = write_json_report(report, args.eval_dir / "evaluation_report.json")
-    evaluation_markdown_path = write_markdown_report(report, args.eval_dir / "evaluation_report.md")
+    eval_dir = _eval_dir(args, dry_run=True)
+    evaluation_json_path = write_json_report(report, eval_dir / "evaluation_report.json")
+    evaluation_markdown_path = write_markdown_report(report, eval_dir / "evaluation_report.md")
 
     return {
         "summary": summary.to_dict(),
@@ -114,23 +126,95 @@ def run_dry_run(args: argparse.Namespace) -> dict[str, object]:
     }
 
 
+def run_training(args: argparse.Namespace) -> dict[str, object]:
+    examples = load_geominilm_dataset(args.dataset)
+    pairs = preprocess_examples(examples)
+    summary = summarize_examples(examples)
+
+    preprocessed_path = write_preprocessed_jsonl(pairs, args.output_dir / "training_pairs.jsonl")
+    training_result = train_and_save_checkpoint(
+        examples,
+        args.output_dir / "checkpoint.json",
+        model_name=args.model_name,
+    )
+    loaded_model = GeoMiniLMPrototype.load(training_result.checkpoint_path)
+    predictions = loaded_model.predict_many(examples)
+    predictions_path = write_jsonl_records(predictions, args.predictions_dir / "trained_predictions.jsonl")
+
+    expected_records = [example.to_record() for example in examples]
+    trained_report = evaluate_records(expected_records, predictions)
+    baseline_predictions = build_baseline_predictions(examples)
+    baseline_report = evaluate_records(expected_records, baseline_predictions)
+    comparison = compare_reports(trained_report, baseline_report)
+
+    eval_dir = _eval_dir(args, dry_run=False)
+    evaluation_json_path = write_json_report(trained_report, eval_dir / "evaluation_report.json")
+    evaluation_markdown_path = write_markdown_report(trained_report, eval_dir / "evaluation_report.md")
+    comparison_json_path, comparison_markdown_path = write_comparison_report(
+        comparison,
+        eval_dir / "baseline_comparison.json",
+        eval_dir / "baseline_comparison.md",
+    )
+    metadata_path = write_metadata(
+        args.output_dir / "metadata.json",
+        dataset_path=args.dataset,
+        model_name=args.model_name,
+        summary=summary.to_dict(),
+        training_status="complete",
+        dry_run=False,
+        training=training_result.metadata,
+        evaluation={
+            "summary_score": round(trained_report.summary_score, 4),
+            "passed": trained_report.passed,
+            "baseline_summary_score": comparison["baseline_summary_score"],
+            "summary_delta": comparison["summary_delta"],
+        },
+    )
+
+    return {
+        "summary": summary.to_dict(),
+        "preprocessed_path": preprocessed_path,
+        "metadata_path": metadata_path,
+        "checkpoint_path": training_result.checkpoint_path,
+        "predictions_path": predictions_path,
+        "evaluation_json_path": evaluation_json_path,
+        "evaluation_markdown_path": evaluation_markdown_path,
+        "comparison_json_path": comparison_json_path,
+        "comparison_markdown_path": comparison_markdown_path,
+    }
+
+
+def _eval_dir(args: argparse.Namespace, *, dry_run: bool) -> Path:
+    if args.eval_dir is not None:
+        return args.eval_dir
+    return Path("outputs/eval/geominilm_dry_run" if dry_run else "outputs/eval/geominilm_training")
+
+
 def write_metadata(
     path: Path,
     *,
     dataset_path: Path,
     model_name: str,
     summary: dict[str, object],
+    training_status: str,
+    dry_run: bool,
+    training: dict[str, object] | None = None,
+    evaluation: dict[str, object] | None = None,
 ) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     metadata = {
         "created_at": datetime.now(UTC).isoformat(),
         "dataset": str(dataset_path),
-        "dry_run": True,
+        "dry_run": dry_run,
         "model_name": model_name,
         "summary": summary,
-        "training_status": "not_started",
-        "notes": "Local dry run validates and preprocesses data without downloading model weights.",
+        "training_status": training_status,
+        "notes": "Local prototype uses a deterministic TF-IDF nearest-neighbor checkpoint over workflow prompts.",
     }
+    if training is not None:
+        metadata["training"] = training
+    if evaluation is not None:
+        metadata["evaluation"] = evaluation
     path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return path
 

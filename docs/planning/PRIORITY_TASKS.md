@@ -9,51 +9,29 @@ Status labels:
 
 ## Current Priority Queue
 
-### 1. `[IN-PROGRESS]` Train First GeoMiniLM Prototype
+### 1. `[TODO]` Add Held-Out GeoMiniLM Evaluation
 
-Goal: train or adapter-tune a small prototype that generates structured GIS and
-visualization workflows from GeoMiniLM examples.
+Goal: measure GeoMiniLM prototype generalization with held-out or leave-one-out
+workflow evaluation instead of scoring only on the 12 training records.
 
-Why now: the operational GIS platform is stable, but the repository still lacks
-the model prototype central to the GeoVisLM product direction. Start after the
-evaluation schema and baseline are usable.
-
-Build:
-
-* Add dataset/preprocessing and training modules under `geovis_lm/model/`.
-* Add `scripts/train_geominilm.py` using
-  `data/geominilm/starter_workflows.jsonl`.
-* Support a local-friendly model or adapter path, documented hardware limits,
-  and a no-download dry run.
-* Store models under `outputs/models/geominilm/` and predictions under
-  `outputs/model_samples/`.
-* Evaluate at least one generated prediction with the priority-2 evaluator.
-
-Progress:
-
-* Data-pipeline slice is complete: dataset loading, schema validation,
-  preprocessing, CLI help, and no-download dry run.
-* Next slice: implement real local training, save a model checkpoint, run
-  inference, and evaluate generated predictions against the established
-  baseline.
+Why now: the first prototype validates the end-to-end train/checkpoint/infer
+contract, but the saturated `1.000` training-set score does not prove
+generalization.
 
 Acceptance criteria:
 
-* The loader reads and validates every starter JSONL example.
-* Training CLI help and preprocessing dry run succeed.
-* Model artifacts and reproducible configuration metadata are written.
-* At least one inference produces a schema-valid structured workflow.
-* An evaluation report records prototype quality and limitations.
+* Add a held-out split or leave-one-out evaluation mode for GeoMiniLM examples.
+* Generate predictions for records excluded from each training fold.
+* Compare held-out scores against the dry-run and training-set baselines.
+* Document limitations from the tiny starter dataset.
 
 Validation:
 
 ```bash
-python3 -m py_compile geovis_lm/model/dataset.py
-python3 scripts/train_geominilm.py --help
-python3 scripts/train_geominilm.py --dataset data/geominilm/starter_workflows.jsonl --dry-run
+python3 scripts/train_geominilm.py --dataset data/geominilm/starter_workflows.jsonl
 ```
 
-### 3. `[TODO]` Install and Verify Host GDAL Tools
+### 2. `[TODO]` Install and Verify Host GDAL Tools
 
 Goal: make `gdalinfo` and `ogrinfo` available for host-level production
 diagnostics in addition to the working containerized GIS stack.
@@ -79,7 +57,7 @@ ogrinfo --version
 gdalinfo data/sample/sample_dem.tif
 ```
 
-### 4. `[TODO]` Add Project Sharing and Report Comments
+### 3. `[TODO]` Add Project Sharing and Report Comments
 
 Goal: let owners invite collaborators to individual projects and discuss
 generated reports without weakening current tenant isolation.
