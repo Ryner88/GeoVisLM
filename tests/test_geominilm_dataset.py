@@ -16,6 +16,9 @@ from geovis_lm.model.dataset import (
 
 
 STARTER_DATASET = Path("data/geominilm/starter_workflows.jsonl")
+TRAINING_EXPANSION = Path("data/geominilm/training_expansion_workflows.jsonl")
+VALIDATION_DATASET = Path("data/geominilm/validation_workflows.jsonl")
+FAILURE_TAXONOMY = Path("data/geominilm/failure_taxonomy.json")
 
 
 def test_load_geominilm_dataset_validates_starter_records():
@@ -61,6 +64,36 @@ def test_load_geominilm_dataset_reports_invalid_jsonl(tmp_path):
         load_geominilm_dataset(path)
 
     assert any("missing required fields" in error for error in exc_info.value.errors)
+
+
+def test_validation_and_training_expansion_are_disjoint_and_valid():
+    starter = load_geominilm_dataset(STARTER_DATASET)
+    expansion = load_geominilm_dataset(TRAINING_EXPANSION)
+    validation = load_geominilm_dataset(VALIDATION_DATASET)
+
+    training_ids = {example.id for example in starter + expansion}
+    validation_ids = {example.id for example in validation}
+
+    assert len(expansion) == 8
+    assert len(validation) == 6
+    assert training_ids.isdisjoint(validation_ids)
+    assert {example.domain for example in validation} == {"gis", "qgis", "paraview", "reporting"}
+
+
+def test_failure_taxonomy_covers_validation_and_expansion_ids():
+    taxonomy = json.loads(FAILURE_TAXONOMY.read_text(encoding="utf-8"))
+    expansion_ids = {example.id for example in load_geominilm_dataset(TRAINING_EXPANSION)}
+    validation_ids = {example.id for example in load_geominilm_dataset(VALIDATION_DATASET)}
+    categorized_expansion_ids = set()
+    categorized_validation_ids = set()
+
+    for category in taxonomy["categories"].values():
+        categorized_expansion_ids.update(category["training_expansion_ids"])
+        categorized_validation_ids.update(category["validation_ids"])
+
+    assert expansion_ids == categorized_expansion_ids
+    assert validation_ids == categorized_validation_ids
+    assert taxonomy["baseline_reference"]["heldout_score"] == 0.4943
 
 
 def write_jsonl(path: Path, records: list[dict]) -> Path:

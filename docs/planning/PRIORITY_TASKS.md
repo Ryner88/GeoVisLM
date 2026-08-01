@@ -9,41 +9,7 @@ Status labels:
 
 ## Current Priority Queue
 
-### 1. `[IN-PROGRESS]` Improve GeoMiniLM Held-Out Performance
-
-Goal: improve GeoMiniLM generalization after leave-one-out evaluation showed
-the first nearest-neighbor prototype does not generalize beyond the starter
-training records.
-
-Why now: the held-out evaluation is now complete and produced the expected
-signal: training-set score `1.0000`, held-out score `0.4943`, failed examples
-`12/12`. The conclusion is that the nearest-neighbor prototype memorizes the
-starter dataset and does not yet generalize.
-
-Acceptance criteria:
-
-* Expand the 12-record starter dataset before increasing model complexity.
-* Stratify examples by domain, workflow type, inputs, tools, and output shapes.
-* Add enough near-neighbor and contrastive examples to make held-out retrieval
-  less brittle.
-* Relabel or replace the `1.0000` dry-run baseline if it derives predictions
-  from expected outputs; it is not an honest generalization benchmark.
-* Track held-out score, training-set score, baseline score, delta, and
-  per-example failures after each dataset expansion.
-
-Progress:
-
-* Prioritize expanding and stratifying data over increasing model complexity.
-* Treat the current held-out result as the baseline for improvement:
-  `0.4943` held-out score, `12/12` failed examples.
-
-Validation:
-
-```bash
-python3 scripts/train_geominilm.py --dataset data/geominilm/starter_workflows.jsonl --held-out-eval
-```
-
-### 2. `[TODO]` Install and Verify Host GDAL Tools
+### 1. `[TODO]` Install and Verify Host GDAL Tools
 
 Goal: make `gdalinfo` and `ogrinfo` available for host-level production
 diagnostics in addition to the working containerized GIS stack.
@@ -69,7 +35,7 @@ ogrinfo --version
 gdalinfo data/sample/sample_dem.tif
 ```
 
-### 3. `[TODO]` Add Project Sharing and Report Comments
+### 2. `[TODO]` Add Project Sharing and Report Comments
 
 Goal: let owners invite collaborators to individual projects and discuss
 generated reports without weakening current tenant isolation.

@@ -130,3 +130,54 @@ def test_train_geominilm_held_out_eval_writes_excluded_fold_reports(tmp_path):
         assert prediction["id"] not in prediction["fold_training_record_ids"]
         assert prediction["source_checkpoint_record_id"] != prediction["id"]
     assert "GeoMiniLM held-out evaluation complete" in result.stdout
+
+
+def test_train_geominilm_validation_experiment_writes_honest_baseline_reports(tmp_path):
+    output_dir = tmp_path / "model"
+    predictions_dir = tmp_path / "predictions"
+    eval_dir = tmp_path / "eval"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/train_geominilm.py",
+            "--dataset",
+            "data/geominilm/starter_workflows.jsonl",
+            "--extra-training-data",
+            "data/geominilm/training_expansion_workflows.jsonl",
+            "--validation-set",
+            "data/geominilm/validation_workflows.jsonl",
+            "--output-dir",
+            str(output_dir),
+            "--predictions-dir",
+            str(predictions_dir),
+            "--eval-dir",
+            str(eval_dir),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    metadata = json.loads((output_dir / "validation_experiment_metadata.json").read_text(encoding="utf-8"))
+    comparison = json.loads((eval_dir / "experiment_comparison.json").read_text(encoding="utf-8"))
+
+    assert metadata["training_status"] == "validation_experiment_complete"
+    assert metadata["training"]["training_records"] == 20
+    assert metadata["training"]["validation_records"] == 6
+    assert comparison["oracle_sanity_score"] == 1.0
+    assert comparison["reference_heldout_score"] == 0.4943
+    assert comparison["failure_count"] <= 3
+    assert "category_results" in comparison
+    assert comparison["category_results"]["qgis_styling_and_layout_exports"]["total_count"] == 2
+    improved_categories = [
+        category
+        for category in comparison["category_results"].values()
+        if category["trained_score"] > category["honest_baseline_score"]
+    ]
+    assert len(improved_categories) >= 3
+    assert "oracle/sanity" not in comparison["baseline_notes"]["honest_baseline"]
+    assert "directional" in comparison["baseline_notes"]["reference_heldout"]
+    assert (predictions_dir / "honest_baseline_predictions.jsonl").exists()
+    assert (eval_dir / "experiment_comparison.md").exists()
+    assert "GeoMiniLM validation experiment complete" in result.stdout

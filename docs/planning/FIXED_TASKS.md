@@ -8,6 +8,53 @@ Status labels:
 
 ## Completed Work
 
+### `[DONE]` Improve GeoMiniLM Held-Out Performance
+
+Implemented:
+
+- Froze an independently authored validation set before tuning:
+  `data/geominilm/validation_workflows.jsonl`.
+- Categorized the original 12 held-out failures by operation, parameters, and
+  output structure in `data/geominilm/failure_taxonomy.json`.
+- Added disjoint, stratified training expansion examples in
+  `data/geominilm/training_expansion_workflows.jsonl`.
+- Added an honest domain-exemplar baseline and retained the `1.0000`
+  expected-output baseline only as an oracle pipeline sanity check.
+- Added validation experiment reporting with reproducible metadata,
+  per-example failures, and per-category results.
+- Added tests for training-validation leakage, deterministic repeated
+  experiments, validation failure count, and multi-category gains.
+
+Results:
+
+- Training records: `20`
+- Frozen validation records: `6`
+- Trained validation score: `0.7507`
+- Honest same-set baseline score: `0.5482`
+- Delta versus honest same-set baseline: `+0.2025`
+- Validation failures: `3/6`
+- Category gains: all tracked categories improved versus the honest baseline.
+- Oracle sanity score: `1.0000`
+
+Notes:
+
+- The `+0.2564` delta versus the prior `0.4943` leave-one-out score is
+  directional because the evaluation protocols differ.
+- The strongest comparison is `0.7507` versus `0.5482` on the same frozen
+  validation set.
+- Dataset coverage and error analysis were prioritized before changing the
+  TF-IDF nearest-neighbor model.
+
+Verified:
+
+- `python3 -m py_compile geovis_lm/model/dataset.py geovis_lm/model/prototype.py scripts/train_geominilm.py`
+- `python3 scripts/train_geominilm.py --dataset data/geominilm/starter_workflows.jsonl --extra-training-data data/geominilm/training_expansion_workflows.jsonl --validation-set data/geominilm/validation_workflows.jsonl`
+- Repeated the validation experiment twice; `experiment_comparison.json`
+  remained stable at
+  `b9661277b0ff8404f947be0d61a430ae5843477c4fcf54fcd5958c847f46695b`.
+- `timeout 120 .venv/bin/python -m pytest tests/test_geominilm_dataset.py tests/test_geominilm_prototype.py tests/test_train_geominilm_cli.py -vv` (`17 passed`)
+- `timeout 300 .venv/bin/python -m pytest -q` (`68 passed`)
+
 ### `[DONE]` Add Held-Out GeoMiniLM Evaluation
 
 Implemented:

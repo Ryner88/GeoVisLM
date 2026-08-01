@@ -38,6 +38,16 @@ class HeldOutEvaluationResult:
     folds: list[HeldOutFoldResult]
 
 
+@dataclass(frozen=True)
+class ValidationExperimentResult:
+    predictions: list[dict[str, Any]]
+    trained_report: EvaluationReport
+    honest_baseline_predictions: list[dict[str, Any]]
+    honest_baseline_report: EvaluationReport
+    oracle_sanity_report: EvaluationReport
+    comparison: dict[str, Any]
+
+
 class GeoMiniLMPrototype:
     def __init__(
         self,
@@ -191,6 +201,121 @@ def run_leave_one_out_evaluation(
     )
 
 
+def run_validation_experiment(
+    training_examples: list[GeoMiniLMExample],
+    validation_examples: list[GeoMiniLMExample],
+    checkpoint_path: Path,
+    *,
+    model_name: str = "geominilm-token-retrieval-v1",
+    reference_heldout_score: float = 0.4943,
+) -> ValidationExperimentResult:
+    _validate_disjoint_ids(training_examples, validation_examples)
+    train_and_save_checkpoint(training_examples, checkpoint_path, model_name=model_name)
+    model = GeoMiniLMPrototype.load(checkpoint_path)
+    predictions = model.predict_many(validation_examples)
+    expected_records = [example.to_record() for example in validation_examples]
+    trained_report = evaluate_records(expected_records, predictions)
+
+    honest_baseline_predictions = build_domain_exemplar_baseline_predictions(training_examples, validation_examples)
+    honest_baseline_report = evaluate_records(expected_records, honest_baseline_predictions)
+    oracle_sanity_report = evaluate_records(expected_records, _oracle_baseline_predictions(validation_examples))
+    comparison = compare_validation_reports(
+        trained_report,
+        honest_baseline_report,
+        oracle_sanity_report,
+        reference_heldout_score=reference_heldout_score,
+    )
+    return ValidationExperimentResult(
+        predictions=predictions,
+        trained_report=trained_report,
+        honest_baseline_predictions=honest_baseline_predictions,
+        honest_baseline_report=honest_baseline_report,
+        oracle_sanity_report=oracle_sanity_report,
+        comparison=comparison,
+    )
+
+
+def build_domain_exemplar_baseline_predictions(
+    training_examples: list[GeoMiniLMExample],
+    evaluation_examples: list[GeoMiniLMExample],
+) -> list[dict[str, Any]]:
+    if not training_examples:
+        raise ValueError("Honest baseline requires at least one training example")
+    exemplars: dict[str, GeoMiniLMExample] = {}
+    for example in sorted(training_examples, key=lambda item: item.id):
+        exemplars.setdefault(example.domain, example)
+    fallback = sorted(training_examples, key=lambda item: item.id)[0]
+    predictions = []
+    for evaluation in evaluation_examples:
+        source = exemplars.get(evaluation.domain, fallback)
+        predictions.append(
+            {
+                "id": evaluation.id,
+                "domain": evaluation.domain,
+                "instruction": evaluation.instruction,
+                "inputs": evaluation.inputs,
+                "predicted_workflow": source.expected_workflow,
+                "explanation": source.explanation,
+                "source_baseline_record_id": source.id,
+                "baseline_type": "domain_exemplar",
+            }
+        )
+    return predictions
+
+
+def compare_validation_reports(
+    trained: EvaluationReport,
+    honest_baseline: EvaluationReport,
+    oracle_sanity: EvaluationReport,
+    *,
+    reference_heldout_score: float,
+) -> dict[str, Any]:
+    trained_records = {record.record_id: record for record in trained.records}
+    baseline_records = {record.record_id: record for record in honest_baseline.records}
+    record_deltas = []
+    failed_examples = []
+    finding_examples = []
+    for record_id in sorted(trained_records):
+        trained_record = trained_records[record_id]
+        baseline_record = baseline_records[record_id]
+        item = {
+            "id": record_id,
+            "trained_score": round(trained_record.score, 4),
+            "honest_baseline_score": round(baseline_record.score, 4),
+            "delta_vs_honest_baseline": round(trained_record.score - baseline_record.score, 4),
+            "findings": trained_record.findings,
+        }
+        record_deltas.append(item)
+        if not trained_record.passed:
+            failed_examples.append(item)
+        if trained_record.findings:
+            finding_examples.append(item)
+    return {
+        "trained_validation_score": round(trained.summary_score, 4),
+        "honest_baseline_score": round(honest_baseline.summary_score, 4),
+        "oracle_sanity_score": round(oracle_sanity.summary_score, 4),
+        "reference_heldout_score": reference_heldout_score,
+        "delta_vs_honest_baseline": round(trained.summary_score - honest_baseline.summary_score, 4),
+        "delta_vs_reference_heldout": round(trained.summary_score - reference_heldout_score, 4),
+        "trained_passed": trained.passed,
+        "honest_baseline_passed": honest_baseline.passed,
+        "oracle_sanity_passed": oracle_sanity.passed,
+        "record_deltas": record_deltas,
+        "failed_examples": failed_examples,
+        "failure_count": len(failed_examples),
+        "finding_examples": finding_examples,
+        "baseline_notes": {
+            "honest_baseline": "Domain-exemplar retrieval from training records only.",
+            "oracle_sanity": "Uses expected validation outputs and is only a pipeline sanity check.",
+            "reference_heldout": (
+                "Comparison to the 0.4943 leave-one-out score is directional because the validation-set "
+                "and leave-one-out protocols differ; the strongest comparison is trained_validation_score "
+                "versus honest_baseline_score on the same frozen validation set."
+            ),
+        },
+    }
+
+
 def compare_reports(
     trained: EvaluationReport,
     baseline: EvaluationReport,
@@ -285,6 +410,17 @@ def _prediction_source(predictions: list[dict[str, Any]], record_id: str) -> str
         if prediction["id"] == record_id:
             return prediction.get("source_checkpoint_record_id")
     return None
+
+
+def _validate_disjoint_ids(
+    training_examples: list[GeoMiniLMExample],
+    validation_examples: list[GeoMiniLMExample],
+) -> None:
+    training_ids = {example.id for example in training_examples}
+    validation_ids = {example.id for example in validation_examples}
+    overlap = sorted(training_ids & validation_ids)
+    if overlap:
+        raise ValueError(f"Training and validation examples must be disjoint: {', '.join(overlap)}")
 
 
 def _display_label(label: str) -> str:

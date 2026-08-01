@@ -6,6 +6,12 @@ geospatial and scientific visualization model planned for GeoVisLM.
 ## Files
 
 - `starter_workflows.jsonl`: seed examples for GIS, QGIS, and ParaView workflow generation.
+- `training_expansion_workflows.jsonl`: additional stratified training examples
+  authored after the held-out failure analysis. These are training-only records.
+- `validation_workflows.jsonl`: frozen independently authored validation
+  examples. Do not copy these records into training data.
+- `failure_taxonomy.json`: categorizes the first held-out failures by
+  operation, parameters, output structure, and coverage records.
 
 ## JSONL Schema
 
@@ -51,3 +57,12 @@ The starter dataset includes:
 
 This is seed data only. Production training should add more varied geography,
 file formats, failure cases, and evaluation labels.
+
+## Evaluation Splits
+
+- Keep validation ids disjoint from starter and expansion training ids.
+- Treat the `1.0000` expected-output baseline as an oracle sanity check only.
+  It confirms the evaluation pipeline can score perfect predictions, but it is
+  not an honest generalization benchmark.
+- Compare improvement experiments against the current held-out reference score
+  of `0.4943` and report per-category failures.

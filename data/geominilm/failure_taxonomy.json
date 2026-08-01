@@ -1,0 +1,117 @@
+{
+  "baseline_reference": {
+    "failed_examples": 12,
+    "heldout_score": 0.4943,
+    "summary_delta_vs_oracle_sanity": -0.5057,
+    "training_set_score": 1.0
+  },
+  "categories": {
+    "gis_hillshade_and_single_raster_products": {
+      "failure_ids": [
+        "gis-terrain-analysis-001",
+        "gis-slope-only-002"
+      ],
+      "operation": "Raster derivation",
+      "output_structure": "Single or multi-output GeoTIFF rasters",
+      "parameters": [
+        "DEM path",
+        "output path or directory",
+        "azimuth/altitude",
+        "nodata",
+        "dtype"
+      ],
+      "training_expansion_ids": [
+        "train-gis-hillshade-custom-013"
+      ],
+      "validation_ids": [
+        "validation-gis-hillshade-only-001"
+      ]
+    },
+    "gis_risk_overlay_and_reclassification": {
+      "failure_ids": [
+        "gis-risk-map-003",
+        "dataset-authoring-012"
+      ],
+      "operation": "Risk classification and dataset validation",
+      "output_structure": "Categorical raster, vector overlay, or validation report",
+      "parameters": [
+        "thresholds",
+        "class values",
+        "risk factors",
+        "schema fields"
+      ],
+      "training_expansion_ids": [
+        "train-gis-flood-vector-014",
+        "train-gis-risk-threshold-update-015",
+        "train-dataset-validation-020"
+      ],
+      "validation_ids": [
+        "validation-gis-wildfire-vector-002"
+      ]
+    },
+    "qgis_styling_and_layout_exports": {
+      "failure_ids": [
+        "qgis-layer-stack-004",
+        "qgis-risk-styling-005",
+        "qgis-map-export-006",
+        "workflow-qgis-to-paraview-011"
+      ],
+      "operation": "QGIS layer ordering, styling, transparency, and layout export",
+      "output_structure": "QGIS project state, styled layer stack, PNG/PDF layout",
+      "parameters": [
+        "layer order",
+        "opacity",
+        "color ramp",
+        "layout elements",
+        "export path"
+      ],
+      "training_expansion_ids": [
+        "train-qgis-slope-transparency-016",
+        "train-qgis-pdf-export-017"
+      ],
+      "validation_ids": [
+        "validation-qgis-layer-transparency-003",
+        "validation-qgis-layout-pdf-004"
+      ]
+    },
+    "paraview_render_variants": {
+      "failure_ids": [
+        "paraview-render-dem-007",
+        "paraview-vertical-exaggeration-008",
+        "paraview-gui-refinement-009"
+      ],
+      "operation": "ParaView terrain render pipeline variants",
+      "output_structure": "Screenshot plus ParaView state file",
+      "parameters": [
+        "DEM path",
+        "vertical exaggeration",
+        "contour interval",
+        "output prefix"
+      ],
+      "training_expansion_ids": [
+        "train-paraview-contour-overlay-018"
+      ],
+      "validation_ids": [
+        "validation-paraview-contour-render-005"
+      ]
+    },
+    "reporting_summaries": {
+      "failure_ids": [
+        "report-terrain-summary-010"
+      ],
+      "operation": "Markdown reporting",
+      "output_structure": "Narrative Markdown report",
+      "parameters": [
+        "artifact list",
+        "report path",
+        "audience"
+      ],
+      "training_expansion_ids": [
+        "train-report-combined-risk-019"
+      ],
+      "validation_ids": [
+        "validation-report-risk-summary-006"
+      ]
+    }
+  }
+}

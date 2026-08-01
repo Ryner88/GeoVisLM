@@ -28,6 +28,7 @@ from geovis_lm.model.prototype import (  # noqa: E402
     GeoMiniLMPrototype,
     compare_reports,
     run_leave_one_out_evaluation,
+    run_validation_experiment,
     train_and_save_checkpoint,
     write_comparison_report,
 )
@@ -40,6 +41,25 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("data/geominilm/starter_workflows.jsonl"),
         help="GeoMiniLM workflow JSONL dataset.",
+    )
+    parser.add_argument(
+        "--extra-training-data",
+        type=Path,
+        action="append",
+        default=[],
+        help="Additional GeoMiniLM JSONL training data. Can be provided more than once.",
+    )
+    parser.add_argument(
+        "--validation-set",
+        type=Path,
+        default=None,
+        help="Frozen validation JSONL file for honest validation-set evaluation.",
+    )
+    parser.add_argument(
+        "--failure-taxonomy",
+        type=Path,
+        default=Path("data/geominilm/failure_taxonomy.json"),
+        help="Failure taxonomy used for per-category validation reporting.",
     )
     parser.add_argument(
         "--output-dir",
@@ -83,7 +103,10 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     try:
-        if args.held_out_eval:
+        if args.validation_set is not None:
+            artifacts = run_validation_set_experiment(args)
+            mode = "GeoMiniLM validation experiment complete"
+        elif args.held_out_eval:
             artifacts = run_held_out_evaluation(args)
             mode = "GeoMiniLM held-out evaluation complete"
         elif args.dry_run:
@@ -109,6 +132,8 @@ def main() -> None:
     if "fold_checkpoint_dir" in artifacts:
         print(f"Fold checkpoints: {artifacts['fold_checkpoint_dir']}")
         print(f"Baseline comparison: {artifacts['comparison_json_path']}")
+    if "experiment_comparison_path" in artifacts:
+        print(f"Experiment comparison: {artifacts['experiment_comparison_path']}")
 
 
 def run_dry_run(args: argparse.Namespace) -> dict[str, object]:
@@ -144,7 +169,7 @@ def run_dry_run(args: argparse.Namespace) -> dict[str, object]:
 
 
 def run_training(args: argparse.Namespace) -> dict[str, object]:
-    examples = load_geominilm_dataset(args.dataset)
+    examples = _load_training_examples(args)
     pairs = preprocess_examples(examples)
     summary = summarize_examples(examples)
 
@@ -202,7 +227,7 @@ def run_training(args: argparse.Namespace) -> dict[str, object]:
 
 
 def run_held_out_evaluation(args: argparse.Namespace) -> dict[str, object]:
-    examples = load_geominilm_dataset(args.dataset)
+    examples = _load_training_examples(args)
     pairs = preprocess_examples(examples)
     summary = summarize_examples(examples)
 
@@ -263,12 +288,174 @@ def run_held_out_evaluation(args: argparse.Namespace) -> dict[str, object]:
     }
 
 
-def _eval_dir(args: argparse.Namespace, *, dry_run: bool, held_out: bool = False) -> Path:
+def run_validation_set_experiment(args: argparse.Namespace) -> dict[str, object]:
+    training_examples = _load_training_examples(args)
+    validation_examples = load_geominilm_dataset(args.validation_set)
+    pairs = preprocess_examples(training_examples)
+    summary = summarize_examples(training_examples)
+
+    preprocessed_path = write_preprocessed_jsonl(pairs, args.output_dir / "training_pairs.jsonl")
+    result = run_validation_experiment(
+        training_examples,
+        validation_examples,
+        args.output_dir / "validation_checkpoint.json",
+        model_name=args.model_name,
+    )
+    result.comparison["category_results"] = build_category_results(args.failure_taxonomy, result.comparison)
+    predictions_path = write_jsonl_records(result.predictions, args.predictions_dir / "validation_predictions.jsonl")
+    honest_baseline_path = write_jsonl_records(
+        result.honest_baseline_predictions,
+        args.predictions_dir / "honest_baseline_predictions.jsonl",
+    )
+
+    eval_dir = _eval_dir(args, dry_run=False, validation=True)
+    evaluation_json_path = write_json_report(result.trained_report, eval_dir / "evaluation_report.json")
+    evaluation_markdown_path = write_markdown_report(result.trained_report, eval_dir / "evaluation_report.md")
+    honest_baseline_json_path = write_json_report(
+        result.honest_baseline_report,
+        eval_dir / "honest_baseline_report.json",
+    )
+    oracle_sanity_json_path = write_json_report(
+        result.oracle_sanity_report,
+        eval_dir / "oracle_sanity_report.json",
+    )
+    experiment_comparison_path = write_experiment_comparison(
+        result.comparison,
+        eval_dir / "experiment_comparison.json",
+        eval_dir / "experiment_comparison.md",
+    )
+    metadata_path = write_metadata(
+        args.output_dir / "validation_experiment_metadata.json",
+        dataset_path=args.dataset,
+        model_name=args.model_name,
+        summary=summary.to_dict(),
+        training_status="validation_experiment_complete",
+        dry_run=False,
+        training={
+            "training_dataset": str(args.dataset),
+            "extra_training_data": [str(path) for path in args.extra_training_data],
+            "validation_set": str(args.validation_set),
+            "training_records": len(training_examples),
+            "validation_records": len(validation_examples),
+            "checkpoint_path": str(args.output_dir / "validation_checkpoint.json"),
+            "validation_ids": [example.id for example in validation_examples],
+        },
+        evaluation=result.comparison,
+    )
+    return {
+        "summary": summary.to_dict(),
+        "preprocessed_path": preprocessed_path,
+        "metadata_path": metadata_path,
+        "predictions_path": predictions_path,
+        "honest_baseline_path": honest_baseline_path,
+        "evaluation_json_path": evaluation_json_path,
+        "evaluation_markdown_path": evaluation_markdown_path,
+        "honest_baseline_json_path": honest_baseline_json_path,
+        "oracle_sanity_json_path": oracle_sanity_json_path,
+        "experiment_comparison_path": experiment_comparison_path,
+    }
+
+
+def _load_training_examples(args: argparse.Namespace):
+    examples = load_geominilm_dataset(args.dataset)
+    seen_ids = {example.id for example in examples}
+    duplicate_ids = []
+    for path in args.extra_training_data:
+        extra_examples = load_geominilm_dataset(path)
+        for example in extra_examples:
+            if example.id in seen_ids:
+                duplicate_ids.append(example.id)
+            seen_ids.add(example.id)
+        examples.extend(extra_examples)
+    if duplicate_ids:
+        raise EvaluationInputError([f"duplicate training ids: {', '.join(sorted(duplicate_ids))}"])
+    return examples
+
+
+def build_category_results(taxonomy_path: Path, comparison: dict[str, object]) -> dict[str, dict[str, object]]:
+    taxonomy = json.loads(taxonomy_path.read_text(encoding="utf-8"))
+    records = {record["id"]: record for record in comparison["record_deltas"]}
+    failed_ids = {record["id"] for record in comparison["failed_examples"]}
+    category_results = {}
+    for category_name, category in taxonomy["categories"].items():
+        validation_ids = category["validation_ids"]
+        category_records = [records[record_id] for record_id in validation_ids if record_id in records]
+        trained_scores = [record["trained_score"] for record in category_records]
+        honest_baseline_scores = [record["honest_baseline_score"] for record in category_records]
+        category_results[category_name] = {
+            "operation": category["operation"],
+            "parameters": category["parameters"],
+            "output_structure": category["output_structure"],
+            "validation_ids": validation_ids,
+            "training_expansion_ids": category["training_expansion_ids"],
+            "trained_score": round(sum(trained_scores) / len(trained_scores), 4) if trained_scores else 0.0,
+            "honest_baseline_score": (
+                round(sum(honest_baseline_scores) / len(honest_baseline_scores), 4)
+                if honest_baseline_scores
+                else 0.0
+            ),
+            "failed_count": sum(1 for record in category_records if record["id"] in failed_ids),
+            "total_count": len(category_records),
+        }
+    return category_results
+
+
+def _eval_dir(
+    args: argparse.Namespace,
+    *,
+    dry_run: bool,
+    held_out: bool = False,
+    validation: bool = False,
+) -> Path:
     if args.eval_dir is not None:
         return args.eval_dir
+    if validation:
+        return Path("outputs/eval/geominilm_validation")
     if held_out:
         return Path("outputs/eval/geominilm_heldout")
     return Path("outputs/eval/geominilm_dry_run" if dry_run else "outputs/eval/geominilm_training")
+
+
+def write_experiment_comparison(comparison: dict[str, object], json_path: Path, markdown_path: Path) -> Path:
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    markdown_path.parent.mkdir(parents=True, exist_ok=True)
+    json_path.write_text(json.dumps(comparison, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    lines = [
+        "# GeoMiniLM Validation Experiment",
+        "",
+        f"- Trained validation score: {comparison['trained_validation_score']:.4f}",
+        f"- Honest baseline score: {comparison['honest_baseline_score']:.4f}",
+        f"- Oracle sanity score: {comparison['oracle_sanity_score']:.4f}",
+        f"- Reference held-out score: {comparison['reference_heldout_score']:.4f}",
+        f"- Delta vs honest baseline: {comparison['delta_vs_honest_baseline']:.4f}",
+        f"- Delta vs reference held-out: {comparison['delta_vs_reference_heldout']:.4f}",
+        "",
+        "The oracle sanity score uses expected validation outputs and is not a generalization benchmark.",
+        comparison["baseline_notes"]["reference_heldout"],
+        "",
+        "| ID | Trained | Honest Baseline | Delta | Findings |",
+        "| --- | ---: | ---: | ---: | --- |",
+    ]
+    for record in comparison["record_deltas"]:
+        findings = ", ".join(record["findings"]) or "none"
+        lines.append(
+            f"| {record['id']} | {record['trained_score']:.4f} | "
+            f"{record['honest_baseline_score']:.4f} | {record['delta_vs_honest_baseline']:.4f} | {findings} |"
+        )
+    if comparison["failed_examples"]:
+        lines.extend(["", "## Failed Examples", ""])
+        for failure in comparison["failed_examples"]:
+            findings = ", ".join(failure["findings"]) or "none"
+            lines.append(f"- `{failure['id']}` score `{failure['trained_score']:.4f}`: {findings}")
+    if comparison.get("category_results"):
+        lines.extend(["", "## Category Results", "", "| Category | Trained | Honest Baseline | Failed |", "| --- | ---: | ---: | ---: |"])
+        for category_name, result in comparison["category_results"].items():
+            lines.append(
+                f"| {category_name} | {result['trained_score']:.4f} | "
+                f"{result['honest_baseline_score']:.4f} | {result['failed_count']}/{result['total_count']} |"
+            )
+    markdown_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return json_path
 
 
 def write_metadata(

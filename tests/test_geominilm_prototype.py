@@ -3,17 +3,22 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from geovis_lm.eval.workflow_eval import evaluate_records, load_jsonl
 from geovis_lm.model.dataset import build_baseline_predictions, load_geominilm_dataset
 from geovis_lm.model.prototype import (
     GeoMiniLMPrototype,
     compare_reports,
     run_leave_one_out_evaluation,
+    run_validation_experiment,
     train_and_save_checkpoint,
 )
 
 
 STARTER_DATASET = Path("data/geominilm/starter_workflows.jsonl")
+TRAINING_EXPANSION = Path("data/geominilm/training_expansion_workflows.jsonl")
+VALIDATION_DATASET = Path("data/geominilm/validation_workflows.jsonl")
 
 
 def test_prototype_trains_saves_loads_and_predicts_schema_valid_records(tmp_path):
@@ -66,6 +71,48 @@ def test_leave_one_out_evaluation_excludes_heldout_examples_from_training(tmp_pa
         assert fold.record_id not in fold.training_record_ids
         assert fold.prediction["source_checkpoint_record_id"] != fold.record_id
         assert fold.checkpoint_path.exists()
+
+
+def test_validation_experiment_uses_disjoint_frozen_validation_set(tmp_path):
+    training_examples = load_geominilm_dataset(STARTER_DATASET) + load_geominilm_dataset(TRAINING_EXPANSION)
+    validation_examples = load_geominilm_dataset(VALIDATION_DATASET)
+
+    result = run_validation_experiment(training_examples, validation_examples, tmp_path / "validation_checkpoint.json")
+
+    assert result.oracle_sanity_report.summary_score == 1.0
+    assert result.comparison["reference_heldout_score"] == 0.4943
+    assert result.comparison["trained_validation_score"] >= result.comparison["honest_baseline_score"]
+    assert result.comparison["delta_vs_reference_heldout"] > 0.0
+    assert result.comparison["failure_count"] <= 3
+    assert all(prediction["id"] != prediction["source_checkpoint_record_id"] for prediction in result.predictions)
+
+
+def test_validation_experiment_rejects_training_validation_leakage(tmp_path):
+    training_examples = load_geominilm_dataset(STARTER_DATASET)
+    validation_examples = [training_examples[0]]
+
+    with pytest.raises(ValueError) as exc_info:
+        run_validation_experiment(training_examples, validation_examples, tmp_path / "validation_checkpoint.json")
+
+    assert training_examples[0].id in str(exc_info.value)
+
+
+def test_validation_experiment_is_deterministic_and_improves_multiple_categories(tmp_path):
+    training_examples = load_geominilm_dataset(STARTER_DATASET) + load_geominilm_dataset(TRAINING_EXPANSION)
+    validation_examples = load_geominilm_dataset(VALIDATION_DATASET)
+
+    first = run_validation_experiment(training_examples, validation_examples, tmp_path / "first.json")
+    second = run_validation_experiment(training_examples, validation_examples, tmp_path / "second.json")
+    first.comparison.pop("category_results", None)
+    second.comparison.pop("category_results", None)
+
+    assert first.comparison == second.comparison
+    improved_categories = {
+        record["id"]
+        for record in first.comparison["record_deltas"]
+        if record["trained_score"] > record["honest_baseline_score"]
+    }
+    assert len(improved_categories) >= 4
 
 
 def write_jsonl(path: Path, records: list[dict]) -> Path:
