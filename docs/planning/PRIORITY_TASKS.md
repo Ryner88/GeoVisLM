@@ -9,33 +9,7 @@ Status labels:
 
 ## Current Priority Queue
 
-### 1. `[TODO]` Install and Verify Host GDAL Tools
-
-Goal: make `gdalinfo` and `ogrinfo` available for host-level production
-diagnostics in addition to the working containerized GIS stack.
-
-Why now: Prime host access is available, so the former sudo blocker is removed.
-The commands are currently absent from the host, which slows incident diagnosis
-and independent inspection of retained or restored geospatial files.
-
-Acceptance criteria:
-
-* Install the supported `gdal-bin` package without changing container runtime
-  dependencies.
-* Record `gdalinfo` and `ogrinfo` versions.
-* Inspect the sample DEM and an available sample vector dataset.
-* Document host-versus-container GDAL usage and upgrade expectations.
-* Re-run deployment and GIS workflow tests after installation.
-
-Validation:
-
-```bash
-gdalinfo --version
-ogrinfo --version
-gdalinfo data/sample/sample_dem.tif
-```
-
-### 2. `[TODO]` Add Project Sharing and Report Comments
+### 1. `[TODO]` Add Project Sharing and Report Comments
 
 Goal: let owners invite collaborators to individual projects and discuss
 generated reports without weakening current tenant isolation.

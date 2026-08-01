@@ -8,6 +8,42 @@ Status labels:
 
 ## Completed Work
 
+### `[DONE]` Install and Verify Host GDAL Tools
+
+Implemented:
+
+- Verified host-level GDAL tools on the Prime production VPS, not WSL.
+- Confirmed `gdal-bin` package version `3.8.4+dfsg-3ubuntu3`.
+- Recorded `gdalinfo` and `ogrinfo` version output:
+  `GDAL 3.8.4, released 2024/02/08`.
+- Inspected `data/sample/sample_dem.tif` with `gdalinfo`.
+- Inspected `data/sample/sample_overlay.geojson` with `ogrinfo`.
+- Documented host-versus-container usage in
+  `docs/operations/HOST_GDAL_TOOLS.md`.
+- Linked the host GDAL operations note from the Prime deployment runbook.
+
+Verified on Prime:
+
+- Host: `racknerd-47a02a8`
+- Timestamp: `2026-08-01T17:53:24Z` UTC
+- `gdalinfo data/sample/sample_dem.tif` reported `GTiff/GeoTIFF`, size
+  `100 x 80`, pixel size `30 x -30`, `Float32` band, and nodata `-9999`.
+- `ogrinfo -so data/sample/sample_overlay.geojson sample_overlay` reported a
+  polygon layer with `1` feature, extent `(0,0)-(1,1)`, and `id`/`kind`
+  string fields.
+- `docker compose ps` reported dashboard, worker, and PostGIS healthy.
+- `docker compose exec -T dashboard python -m pytest -q` reported
+  `39 passed, 19 warnings in 9.64s`.
+
+Notes:
+
+- Installing GDAL in WSL or on an operator laptop does not satisfy this task;
+  the diagnostic tools must be present on Prime.
+- Host GDAL tools are for production diagnostics and restored-file inspection.
+  Normal dashboard/worker processing remains container-driven.
+- The Prime container warning count is the known NumPy `2.5` masked-array
+  deprecation noise and was not introduced by host GDAL.
+
 ### `[DONE]` Improve GeoMiniLM Held-Out Performance
 
 Implemented:

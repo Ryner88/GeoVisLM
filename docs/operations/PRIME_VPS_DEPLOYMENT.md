@@ -231,6 +231,10 @@ systemctl status caddy docker
 ufw status verbose
 ```
 
+Host-level GDAL diagnostics are documented in
+`docs/operations/HOST_GDAL_TOOLS.md`. Those results apply to Prime only; WSL or
+operator-laptop GDAL installations do not satisfy the production-host check.
+
 For an upgrade, confirm a clean Git tree, back up `.env`, Caddy, and both
 volumes, fetch `origin`, fast-forward `main`, then run `docker compose build`
 and `docker compose up -d`. Repeat all validators and smoke/persistence checks
