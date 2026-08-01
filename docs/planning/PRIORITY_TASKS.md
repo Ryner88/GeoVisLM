@@ -9,7 +9,7 @@ Status labels:
 
 ## Current Priority Queue
 
-### 1. `[TODO]` Add Project Sharing and Report Comments
+### 1. `[IN-PROGRESS]` Add Project Sharing and Report Comments
 
 Goal: let owners invite collaborators to individual projects and discuss
 generated reports without weakening current tenant isolation.
@@ -27,6 +27,14 @@ Build:
 * Activity/audit events for invitations, membership changes, comments, and
   moderation.
 * Operator-safe handling for invitations when public signup remains disabled.
+
+Current slice:
+
+* Implement existing-account project invitations, owner-controlled revocation,
+  read-only collaborator access, enumeration-resistant authorization failures,
+  and project membership audit events.
+* Leave report comments, full cross-tenant regression testing, and Prime
+  deployment for follow-up slices before marking the task `[DONE]`.
 
 Acceptance criteria:
 

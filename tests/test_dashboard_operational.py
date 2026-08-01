@@ -193,13 +193,113 @@ def test_first_party_signup_login_logout_and_user_isolation(app_module):
             assert bob_signup.json()["user"]["email"] == "bob@example.com"
 
             forbidden = await bob.get(f"/api/projects/{alice_project['id']}")
-            assert forbidden.status_code == 403
+            assert forbidden.status_code == 404
 
             projects = await bob.get("/api/projects")
             assert projects.status_code == 200
             assert projects.json()["projects"] == []
 
     asyncio.run(browser_flow())
+
+
+def test_project_invitations_grant_read_only_access_and_can_be_revoked(app_module):
+    operations = sys.modules["geovis_lm.dashboard.operations"]
+
+    def seed_user(user_id: str, email: str, display_name: str) -> dict:
+        user = {
+            "id": user_id,
+            "email": email,
+            "password_hash": "unused",
+            "display_name": display_name,
+            "role": "owner",
+            "active": True,
+            "created_at": "2026-08-01T00:00:00+00:00",
+            "updated_at": "2026-08-01T00:00:00+00:00",
+            "activated_at": "2026-08-01T00:00:00+00:00",
+        }
+        operations.write_json(operations.user_path(app_module.CONFIG, email), user)
+        return user
+
+    alice = seed_user("alice", "alice@example.com", "Alice")
+    bob = seed_user("bob", "bob@example.com", "Bob")
+    seed_user("charlie", "charlie@example.com", "Charlie")
+
+    project_response = request(
+        app_module.app,
+        "post",
+        "/api/projects",
+        headers=auth(alice["id"]),
+        json={"name": "Shared Project", "description": "Membership test"},
+    )
+    assert project_response.status_code == 200
+    project = project_response.json()
+
+    missing = request(
+        app_module.app,
+        "post",
+        f"/api/projects/{project['id']}/invitations",
+        headers=auth(alice["id"]),
+        json={"email": "missing@example.com"},
+    )
+    assert missing.status_code == 404
+
+    invite = request(
+        app_module.app,
+        "post",
+        f"/api/projects/{project['id']}/invitations",
+        headers=auth(alice["id"]),
+        json={"email": "bob@example.com"},
+    )
+    assert invite.status_code == 200
+    assert invite.json()["member"]["role"] == "viewer"
+    assert invite.json()["member"]["user_id"] == bob["id"]
+
+    shared_project = request(app_module.app, "get", f"/api/projects/{project['id']}", headers=auth(bob["id"]))
+    assert shared_project.status_code == 200
+    assert shared_project.json()["id"] == project["id"]
+
+    bob_projects = request(app_module.app, "get", "/api/projects", headers=auth(bob["id"]))
+    assert bob_projects.status_code == 200
+    assert [item["id"] for item in bob_projects.json()["projects"]] == [project["id"]]
+
+    read_only = request(
+        app_module.app,
+        "post",
+        f"/api/projects/{project['id']}/runs",
+        headers=auth(bob["id"]),
+        json={"name": "Blocked collaborator run", "workflow_type": "terrain"},
+    )
+    assert read_only.status_code == 403
+
+    member_admin = request(app_module.app, "get", f"/api/projects/{project['id']}/members", headers=auth(bob["id"]))
+    assert member_admin.status_code == 403
+
+    concealed = request(app_module.app, "get", f"/api/projects/{project['id']}", headers=auth("charlie"))
+    assert concealed.status_code == 404
+
+    members = request(app_module.app, "get", f"/api/projects/{project['id']}/members", headers=auth(alice["id"]))
+    assert members.status_code == 200
+    assert [member["user_id"] for member in members.json()["members"]] == [bob["id"]]
+
+    revoke = request(
+        app_module.app,
+        "delete",
+        f"/api/projects/{project['id']}/members/{bob['id']}",
+        headers=auth(alice["id"]),
+    )
+    assert revoke.status_code == 200
+    assert revoke.json()["revoked_user_id"] == bob["id"]
+
+    revoked_project = request(app_module.app, "get", f"/api/projects/{project['id']}", headers=auth(bob["id"]))
+    assert revoked_project.status_code == 404
+
+    audit = request(app_module.app, "get", f"/api/projects/{project['id']}/audit-events", headers=auth(alice["id"]))
+    assert audit.status_code == 200
+    assert [event["event_type"] for event in audit.json()["events"]] == [
+        "project.member_invited",
+        "project.member_revoked",
+    ]
+    assert audit.json()["events"][0]["actor_user_id"] == alice["id"]
 
 
 def test_signup_invite_code_is_enforced(tmp_path, monkeypatch):
@@ -591,7 +691,7 @@ def test_output_access_rejects_unauthorized_users(app_module):
         headers=auth("user-2", "owner"),
     )
 
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 def test_output_routes_handle_missing_files_and_reject_traversal(app_module):
@@ -735,7 +835,7 @@ def test_authorization_rejects_cross_user_access(app_module):
 
     response = request(app_module.app, "get", f"/api/projects/{project['id']}", headers=auth("user-2", "owner"))
 
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 def test_failed_run_can_create_retry_run(app_module):

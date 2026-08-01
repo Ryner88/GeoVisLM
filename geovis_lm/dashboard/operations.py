@@ -53,6 +53,7 @@ SHAPEFILE_REQUIRED = {".shp", ".shx", ".dbf"}
 DASHBOARD_SESSION_COOKIE = "geovis_session"
 SESSION_TTL_HOURS = 24
 ACCOUNT_ROLES = {"admin", "owner", "editor", "viewer"}
+PROJECT_MEMBER_ROLES = {"viewer"}
 
 
 def utc_now() -> str:
@@ -170,6 +171,18 @@ def run_dir(config: DashboardConfig, run_id: str) -> Path:
 
 def project_metadata_path(config: DashboardConfig, project_id: str) -> Path:
     return project_dir(config, project_id) / "project.json"
+
+
+def project_members_path(config: DashboardConfig, project_id: str) -> Path:
+    return project_dir(config, project_id) / "members.json"
+
+
+def project_invitations_path(config: DashboardConfig, project_id: str) -> Path:
+    return project_dir(config, project_id) / "invitations.json"
+
+
+def project_audit_path(config: DashboardConfig, project_id: str) -> Path:
+    return project_dir(config, project_id) / "audit.jsonl"
 
 
 def run_metadata_path(config: DashboardConfig, run_id: str) -> Path:
@@ -392,17 +405,200 @@ def principal_from_request(request: Request, config: DashboardConfig) -> dict[st
     return {"user_id": user_id or "local-dev", "role": role}
 
 
-def assert_project_access(project: dict[str, Any], principal: dict[str, str], action: str) -> None:
+def _project_permission_error(can_view: bool) -> HTTPException:
+    if can_view:
+        return HTTPException(status_code=403, detail="Project permission denied")
+    return HTTPException(status_code=404, detail="Project not found")
+
+
+def read_project_members(config: DashboardConfig, project_id: str) -> dict[str, Any]:
+    path = project_members_path(config, project_id)
+    if not path.exists():
+        return {"project_id": safe_id(project_id, "project_id"), "members": []}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write_project_members(config: DashboardConfig, project_id: str, data: dict[str, Any]) -> None:
+    data["project_id"] = safe_id(project_id, "project_id")
+    data["members"] = sorted(
+        data.get("members", []), key=lambda member: (member.get("email", ""), member.get("user_id", ""))
+    )
+    write_json(project_members_path(config, project_id), data)
+
+
+def read_project_invitations(config: DashboardConfig, project_id: str) -> dict[str, Any]:
+    path = project_invitations_path(config, project_id)
+    if not path.exists():
+        return {"project_id": safe_id(project_id, "project_id"), "invitations": []}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write_project_invitations(config: DashboardConfig, project_id: str, data: dict[str, Any]) -> None:
+    data["project_id"] = safe_id(project_id, "project_id")
+    data["invitations"] = sorted(
+        data.get("invitations", []), key=lambda invite: (invite.get("created_at", ""), invite.get("id", ""))
+    )
+    write_json(project_invitations_path(config, project_id), data)
+
+
+def append_project_audit_event(
+    config: DashboardConfig,
+    project_id: str,
+    event_type: str,
+    actor_user_id: str,
+    details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    event = {
+        "id": uuid4().hex,
+        "project_id": safe_id(project_id, "project_id"),
+        "event_type": event_type,
+        "actor_user_id": actor_user_id,
+        "details": details or {},
+        "created_at": utc_now(),
+    }
+    path = project_audit_path(config, project_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, sort_keys=True) + "\n")
+    return event
+
+
+def list_project_audit_events(config: DashboardConfig, project_id: str) -> list[dict[str, Any]]:
+    path = project_audit_path(config, project_id)
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def project_member_for_principal(
+    config: DashboardConfig, project: dict[str, Any], principal: dict[str, str]
+) -> dict[str, Any] | None:
+    principal_user_id = principal.get("user_id")
+    if not principal_user_id:
+        return None
+    for member in read_project_members(config, project["id"]).get("members", []):
+        if member.get("user_id") == principal_user_id and member.get("role") in PROJECT_MEMBER_ROLES:
+            return member
+    return None
+
+
+def can_view_project(config: DashboardConfig, project: dict[str, Any], principal: dict[str, str]) -> bool:
+    return (
+        principal.get("user_id") == project.get("owner_user_id")
+        or principal.get("role") == "admin"
+        or project_member_for_principal(config, project, principal) is not None
+    )
+
+
+def assert_project_access(
+    config: DashboardConfig, project: dict[str, Any], principal: dict[str, str], action: str
+) -> None:
     role = principal.get("role", "viewer")
     owner_id = project.get("owner_user_id")
     is_owner = principal.get("user_id") == owner_id
-    if is_owner:
+    is_admin = role == "admin"
+    can_view = can_view_project(config, project, principal)
+    if is_owner or is_admin:
         return
-    if action == "view" and role in {"viewer", "editor"}:
+    if action == "view" and can_view:
         return
-    if action in {"create_run", "upload", "analyze", "report", "retry", "cancel"} and role == "editor":
-        return
-    raise HTTPException(status_code=403, detail="Project permission denied")
+    raise _project_permission_error(can_view)
+
+
+def assert_project_owner(config: DashboardConfig, project: dict[str, Any], principal: dict[str, str]) -> None:
+    assert_project_access(config, project, principal, "manage_members")
+
+
+def list_project_members(config: DashboardConfig, project: dict[str, Any], principal: dict[str, str]) -> dict[str, Any]:
+    assert_project_owner(config, project, principal)
+    members = []
+    for member in read_project_members(config, project["id"]).get("members", []):
+        user = get_user_by_id(config, member["user_id"])
+        public = public_user(user) if user else {"id": member["user_id"], "email": member.get("email", "")}
+        members.append({**member, "user": public})
+    return {"project_id": project["id"], "members": members}
+
+
+def invite_project_member(
+    config: DashboardConfig,
+    project: dict[str, Any],
+    principal: dict[str, str],
+    email: str,
+    role: str = "viewer",
+) -> dict[str, Any]:
+    assert_project_owner(config, project, principal)
+    normalized_role = role.strip().lower()
+    if normalized_role not in PROJECT_MEMBER_ROLES:
+        raise HTTPException(status_code=400, detail="Invalid project member role")
+    user = get_user_by_email(config, email)
+    if not user or not user.get("active", True):
+        raise HTTPException(status_code=404, detail="Account not found")
+    if user["id"] == project.get("owner_user_id"):
+        raise HTTPException(status_code=400, detail="Project owner already has access")
+    members = read_project_members(config, project["id"])
+    for member in members.get("members", []):
+        if member.get("user_id") == user["id"]:
+            raise HTTPException(status_code=409, detail="Project member already exists")
+    now = utc_now()
+    invitation = {
+        "id": uuid4().hex,
+        "project_id": project["id"],
+        "email": user["email"],
+        "user_id": user["id"],
+        "role": normalized_role,
+        "status": "accepted",
+        "invited_by_user_id": principal["user_id"],
+        "created_at": now,
+        "accepted_at": now,
+    }
+    member = {
+        "user_id": user["id"],
+        "email": user["email"],
+        "role": normalized_role,
+        "invited_by_user_id": principal["user_id"],
+        "invitation_id": invitation["id"],
+        "created_at": now,
+        "updated_at": now,
+    }
+    members.setdefault("members", []).append(member)
+    invitations = read_project_invitations(config, project["id"])
+    invitations.setdefault("invitations", []).append(invitation)
+    write_project_members(config, project["id"], members)
+    write_project_invitations(config, project["id"], invitations)
+    append_project_audit_event(
+        config,
+        project["id"],
+        "project.member_invited",
+        principal["user_id"],
+        {"target_user_id": user["id"], "target_email": user["email"], "role": normalized_role},
+    )
+    return {"project_id": project["id"], "invitation": invitation, "member": member}
+
+
+def revoke_project_member(
+    config: DashboardConfig,
+    project: dict[str, Any],
+    principal: dict[str, str],
+    user_id: str,
+) -> dict[str, Any]:
+    assert_project_owner(config, project, principal)
+    safe_user_id = safe_id(user_id, "user_id")
+    if safe_user_id == project.get("owner_user_id"):
+        raise HTTPException(status_code=400, detail="Project owner access cannot be revoked")
+    members = read_project_members(config, project["id"])
+    retained = [member for member in members.get("members", []) if member.get("user_id") != safe_user_id]
+    if len(retained) == len(members.get("members", [])):
+        raise HTTPException(status_code=404, detail="Project member not found")
+    members["members"] = retained
+    write_project_members(config, project["id"], members)
+    append_project_audit_event(
+        config,
+        project["id"],
+        "project.member_revoked",
+        principal["user_id"],
+        {"target_user_id": safe_user_id},
+    )
+    return {"project_id": project["id"], "revoked_user_id": safe_user_id}
 
 
 def create_project(config: DashboardConfig, name: str, owner_user_id: str, description: str = "") -> dict[str, Any]:
@@ -420,6 +616,7 @@ def create_project(config: DashboardConfig, name: str, owner_user_id: str, descr
         "metadata": {},
     }
     write_json(project_metadata_path(config, project_id), project)
+    write_project_members(config, project_id, {"members": []})
     return project
 
 
@@ -431,7 +628,7 @@ def list_projects(config: DashboardConfig, principal: dict[str, str]) -> list[di
     projects = []
     for path in sorted(config.projects_root.glob("*/project.json")):
         project = read_json(path, "Project not found")
-        if project.get("owner_user_id") == principal["user_id"] or principal.get("role") == "admin":
+        if can_view_project(config, project, principal):
             projects.append(project)
     return projects
 

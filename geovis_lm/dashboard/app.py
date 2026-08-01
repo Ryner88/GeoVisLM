@@ -33,12 +33,16 @@ from geovis_lm.dashboard.operations import (
     get_job,
     list_jobs,
     list_output_artifacts,
+    invite_project_member,
+    list_project_audit_events,
+    list_project_members,
     list_projects,
     list_runs,
     list_visible_runs,
     mime_type_for_path,
     principal_from_request,
     public_user,
+    revoke_project_member,
     registered_output_path,
     run_dir,
     run_metadata_path,
@@ -381,6 +385,11 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 class ProjectCreate(BaseModel):
     name: str = Field(default="Untitled Project", min_length=1, max_length=120)
     description: str = ""
+
+
+class ProjectInvitationCreate(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    role: str = "viewer"
 
 
 class RunCreate(BaseModel):
@@ -848,15 +857,44 @@ def list_projects_api(request: Request) -> dict:
 def get_project_api(project_id: str, request: Request) -> dict:
     principal = principal_from_request(request, CONFIG)
     project = get_project(CONFIG, project_id)
-    assert_project_access(project, principal, "view")
+    assert_project_access(CONFIG, project, principal, "view")
     return project
+
+
+@app.get("/api/projects/{project_id}/members")
+def list_project_members_api(project_id: str, request: Request) -> dict:
+    principal = principal_from_request(request, CONFIG)
+    project = get_project(CONFIG, project_id)
+    return list_project_members(CONFIG, project, principal)
+
+
+@app.post("/api/projects/{project_id}/invitations")
+def invite_project_member_api(project_id: str, payload: ProjectInvitationCreate, request: Request) -> dict:
+    principal = principal_from_request(request, CONFIG)
+    project = get_project(CONFIG, project_id)
+    return invite_project_member(CONFIG, project, principal, payload.email, payload.role)
+
+
+@app.delete("/api/projects/{project_id}/members/{user_id}")
+def revoke_project_member_api(project_id: str, user_id: str, request: Request) -> dict:
+    principal = principal_from_request(request, CONFIG)
+    project = get_project(CONFIG, project_id)
+    return revoke_project_member(CONFIG, project, principal, user_id)
+
+
+@app.get("/api/projects/{project_id}/audit-events")
+def list_project_audit_events_api(project_id: str, request: Request) -> dict:
+    principal = principal_from_request(request, CONFIG)
+    project = get_project(CONFIG, project_id)
+    assert_project_access(CONFIG, project, principal, "manage_members")
+    return {"project_id": project_id, "events": list_project_audit_events(CONFIG, project_id)}
 
 
 @app.post("/api/projects/{project_id}/runs")
 def create_project_run(project_id: str, payload: RunCreate, request: Request) -> dict:
     principal = principal_from_request(request, CONFIG)
     project = get_project(CONFIG, project_id)
-    assert_project_access(project, principal, "create_run")
+    assert_project_access(CONFIG, project, principal, "create_run")
     return create_run_record(
         CONFIG,
         project,
@@ -871,7 +909,7 @@ def create_project_run(project_id: str, payload: RunCreate, request: Request) ->
 def list_project_runs(project_id: str, request: Request) -> dict:
     principal = principal_from_request(request, CONFIG)
     project = get_project(CONFIG, project_id)
-    assert_project_access(project, principal, "view")
+    assert_project_access(CONFIG, project, principal, "view")
     return {"project_id": project_id, "runs": list_runs(CONFIG, project_id)}
 
 
@@ -879,7 +917,7 @@ def list_project_runs(project_id: str, request: Request) -> dict:
 def upload_project_run_files(project_id: str, run_id: str, payload: BatchUploadPayload, request: Request) -> dict:
     principal = principal_from_request(request, CONFIG)
     project = get_project(CONFIG, project_id)
-    assert_project_access(project, principal, "upload")
+    assert_project_access(CONFIG, project, principal, "upload")
     run = get_run(CONFIG, run_id)
     if run["project_id"] != project_id:
         raise HTTPException(status_code=404, detail="Run not found")
@@ -891,7 +929,7 @@ def queue_run(run_id: str, request: Request) -> dict:
     principal = principal_from_request(request, CONFIG)
     run = get_run(CONFIG, run_id)
     project = project_for_run(run)
-    assert_project_access(project, principal, "analyze")
+    assert_project_access(CONFIG, project, principal, "analyze")
     queued = update_run(CONFIG, run_id, status="queued", status_message="Analysis queued")
     job = create_job_record(CONFIG, queued, principal["user_id"])
     queued["job"] = job
@@ -904,7 +942,7 @@ def list_jobs_api(request: Request, status: str | None = None, run_id: str | Non
     if run_id:
         run = get_run(CONFIG, run_id)
         project = project_for_run(run)
-        assert_project_access(project, principal, "view")
+        assert_project_access(CONFIG, project, principal, "view")
         return {"jobs": list_jobs(CONFIG, status=status, run_id=run_id)}
     visible_project_ids = {project["id"] for project in list_projects(CONFIG, principal)}
     return {
@@ -919,7 +957,7 @@ def get_job_api(job_id: str, request: Request) -> dict:
     principal = principal_from_request(request, CONFIG)
     job = get_job(CONFIG, job_id)
     project = get_project(CONFIG, job["project_id"])
-    assert_project_access(project, principal, "view")
+    assert_project_access(CONFIG, project, principal, "view")
     return job
 
 
@@ -928,7 +966,7 @@ def analyze_run(run_id: str, request: Request) -> dict:
     principal = principal_from_request(request, CONFIG)
     run = get_run(CONFIG, run_id)
     project = project_for_run(run)
-    assert_project_access(project, principal, "analyze")
+    assert_project_access(CONFIG, project, principal, "analyze")
     return run_analysis_workflow(run_id)
 
 
@@ -937,7 +975,7 @@ def retry_run(run_id: str, request: Request) -> dict:
     principal = principal_from_request(request, CONFIG)
     source_run = get_run(CONFIG, run_id)
     project = project_for_run(source_run)
-    assert_project_access(project, principal, "retry")
+    assert_project_access(CONFIG, project, principal, "retry")
     if source_run.get("status") != "failed" or not source_run.get("retryable"):
         raise HTTPException(status_code=400, detail="Run is not retryable")
     retry = create_run_record(
@@ -968,7 +1006,7 @@ def cancel_run(run_id: str, request: Request) -> dict:
     principal = principal_from_request(request, CONFIG)
     run = get_run(CONFIG, run_id)
     project = project_for_run(run)
-    assert_project_access(project, principal, "cancel")
+    assert_project_access(CONFIG, project, principal, "cancel")
     if run["status"] not in {"created", "queued", "running"}:
         raise HTTPException(status_code=400, detail="Only created, queued, or running runs can be canceled")
     return update_run(CONFIG, run_id, status="canceled", status_message="Run canceled")
@@ -979,7 +1017,7 @@ def generate_report(run_id: str, request: Request) -> dict:
     principal = principal_from_request(request, CONFIG)
     metadata = get_run(CONFIG, run_id)
     project = project_for_run(metadata)
-    assert_project_access(project, principal, "report")
+    assert_project_access(CONFIG, project, principal, "report")
     dem_path = first_valid_dem(metadata)
     outputs = metadata.get("outputs", {})
 
@@ -1019,7 +1057,7 @@ def list_all_runs(request: Request, project_id: str | None = None) -> dict:
     principal = principal_from_request(request, CONFIG)
     if project_id:
         project = get_project(CONFIG, project_id)
-        assert_project_access(project, principal, "view")
+        assert_project_access(CONFIG, project, principal, "view")
         return {"runs": list_runs(CONFIG, project_id)}
     return {"runs": list_visible_runs(CONFIG, principal)}
 
@@ -1029,7 +1067,7 @@ def get_run_api(run_id: str, request: Request) -> dict:
     principal = principal_from_request(request, CONFIG)
     run = get_run(CONFIG, run_id)
     project = project_for_run(run)
-    assert_project_access(project, principal, "view")
+    assert_project_access(CONFIG, project, principal, "view")
     return run
 
 
@@ -1038,7 +1076,7 @@ def list_outputs(run_id: str, request: Request) -> dict:
     principal = principal_from_request(request, CONFIG)
     run = get_run(CONFIG, run_id)
     project = project_for_run(run)
-    assert_project_access(project, principal, "view")
+    assert_project_access(CONFIG, project, principal, "view")
     files = list_output_artifacts(CONFIG, run)
     return {"project_id": run["project_id"], "run_id": run_id, "files": files}
 
@@ -1048,7 +1086,7 @@ def download_output(run_id: str, output_key: str, request: Request) -> FileRespo
     principal = principal_from_request(request, CONFIG)
     run = get_run(CONFIG, run_id)
     project = project_for_run(run)
-    assert_project_access(project, principal, "view")
+    assert_project_access(CONFIG, project, principal, "view")
     path = registered_output_path(CONFIG, run, output_key)
     if not path.exists() or not path.is_file():
         raise HTTPException(status_code=404, detail="Output file missing")
@@ -1065,7 +1103,7 @@ def preview_output(run_id: str, output_key: str, request: Request) -> FileRespon
     principal = principal_from_request(request, CONFIG)
     run = get_run(CONFIG, run_id)
     project = project_for_run(run)
-    assert_project_access(project, principal, "view")
+    assert_project_access(CONFIG, project, principal, "view")
     path = registered_output_path(CONFIG, run, output_key)
     if path.suffix.lower() != ".png":
         raise HTTPException(status_code=400, detail="Only PNG outputs can be previewed")
@@ -1078,7 +1116,7 @@ def preview_output(run_id: str, output_key: str, request: Request) -> FileRespon
 def project_page(project_id: str, request: Request) -> str:
     principal = principal_from_request(request, CONFIG)
     project = get_project(CONFIG, project_id)
-    assert_project_access(project, principal, "view")
+    assert_project_access(CONFIG, project, principal, "view")
     runs = list_runs(CONFIG, project_id)
     run_rows = "\n".join(
         "<tr>"
@@ -1127,7 +1165,7 @@ def run_page(run_id: str, request: Request) -> str:
     principal = principal_from_request(request, CONFIG)
     run = get_run(CONFIG, run_id)
     project = project_for_run(run)
-    assert_project_access(project, principal, "view")
+    assert_project_access(CONFIG, project, principal, "view")
     jobs = list_jobs(CONFIG, run_id=run_id)
     artifacts = list_output_artifacts(CONFIG, run)
 
@@ -1313,7 +1351,7 @@ async def create_run_form(project_id: str, request: Request) -> HTMLResponse:
     form = parse_qs((await request.body()).decode("utf-8"))
     principal = principal_from_request(request, CONFIG)
     project = get_project(CONFIG, project_id)
-    assert_project_access(project, principal, "create_run")
+    assert_project_access(CONFIG, project, principal, "create_run")
     run = create_run_record(CONFIG, project, principal["user_id"], name=form.get("name", ["Terrain Run"])[0])
     return HTMLResponse(f"<meta http-equiv='refresh' content='0; url=/runs/{run['run_id']}'>")
 
@@ -1323,7 +1361,7 @@ async def upload_run_file_form(project_id: str, run_id: str, request: Request) -
     form = parse_qs((await request.body()).decode("utf-8"))
     principal = principal_from_request(request, CONFIG)
     project = get_project(CONFIG, project_id)
-    assert_project_access(project, principal, "upload")
+    assert_project_access(CONFIG, project, principal, "upload")
     run = get_run(CONFIG, run_id)
     if run["project_id"] != project_id:
         raise HTTPException(status_code=404, detail="Run not found")
@@ -1359,7 +1397,7 @@ async def upload_dem_compat(
     principal = principal_from_request(request, CONFIG)
     run = get_run(CONFIG, run_id)
     project = project_for_run(run)
-    assert_project_access(project, principal, "upload")
+    assert_project_access(CONFIG, project, principal, "upload")
 
     chunks = []
     async for chunk in request.stream():
@@ -1377,7 +1415,7 @@ def use_sample_dem(run_id: str, request: Request) -> dict:
     principal = principal_from_request(request, CONFIG)
     run = get_run(CONFIG, run_id)
     project = project_for_run(run)
-    assert_project_access(project, principal, "upload")
+    assert_project_access(CONFIG, project, principal, "upload")
     return copy_sample_dem_to_run_compat(run_id)
 
 
