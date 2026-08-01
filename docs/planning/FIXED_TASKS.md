@@ -8,6 +8,47 @@ Status labels:
 
 ## Completed Work
 
+### `[DONE]` Add Project Sharing and Report Comments
+
+Implemented project-level collaboration without weakening tenant isolation.
+
+Implemented:
+
+- Existing-account project invitations.
+- Owner-controlled collaborator access and revocation.
+- Read-only collaborator permissions for project, run, output, and report
+  visibility.
+- Enumeration-resistant `404` responses for inaccessible projects, reports,
+  and comments.
+- Project audit events for membership invitation and revocation.
+- Markdown report comments attached to generated `report_md` outputs.
+- Author metadata, creation/update timestamps, sanitized Markdown HTML, and
+  immutable edit-history entries.
+- Collaborator and owner comment creation.
+- Author-only comment edits.
+- Owner-only resolve, reopen, and soft-delete moderation.
+- Audit events for comment create, edit, resolve, reopen, and delete.
+
+Verified locally:
+
+- `timeout 180 .venv/bin/python -m pytest -q`: `72 passed`.
+- `timeout 240 .venv/bin/python scripts/local_operational_smoke.py`: passed.
+- `.venv/bin/python scripts/validate_docker_deployment.py`: passed.
+- `.venv/bin/python scripts/validate_docker_deployment.py --compose-config`:
+  passed.
+
+Verified on Prime:
+
+- Deployed commit `ee56a31` to Prime `main` with `deploy_runbook.sh --cache
+  --branch main --skip-pull`.
+- Dashboard, worker, and PostGIS containers reported healthy.
+- Public and local-origin `/readyz` returned ready with storage, database mode,
+  required auth, and configured auth.
+- Public login check returned the production login page.
+- `docker compose exec -T dashboard python scripts/compose_worker_smoke.py
+  --token "$GEOVIS_AUTH_TOKEN"` completed one queued worker run with status
+  `completed` and `6` outputs.
+
 ### `[DONE]` Install and Verify Host GDAL Tools
 
 Implemented:
