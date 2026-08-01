@@ -16,7 +16,9 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+import bleach
 from fastapi import HTTPException, Request
+from markdown_it import MarkdownIt
 
 
 RUN_STATUSES = {
@@ -54,6 +56,29 @@ DASHBOARD_SESSION_COOKIE = "geovis_session"
 SESSION_TTL_HOURS = 24
 ACCOUNT_ROLES = {"admin", "owner", "editor", "viewer"}
 PROJECT_MEMBER_ROLES = {"viewer"}
+REPORT_COMMENT_OUTPUT_KEY = "report_md"
+COMMENT_MARKDOWN_MAX_LENGTH = 10000
+COMMENT_MARKDOWN_TAGS = {
+    "a",
+    "blockquote",
+    "br",
+    "code",
+    "em",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "hr",
+    "li",
+    "ol",
+    "p",
+    "pre",
+    "strong",
+    "ul",
+}
+COMMENT_MARKDOWN_ATTRIBUTES = {"a": ["href", "title"]}
 
 
 def utc_now() -> str:
@@ -187,6 +212,10 @@ def project_audit_path(config: DashboardConfig, project_id: str) -> Path:
 
 def run_metadata_path(config: DashboardConfig, run_id: str) -> Path:
     return run_dir(config, run_id) / "metadata.json"
+
+
+def report_comments_path(config: DashboardConfig, run_id: str) -> Path:
+    return run_dir(config, run_id) / "reports" / "comments.json"
 
 
 def job_metadata_path(config: DashboardConfig, job_id: str) -> Path:
@@ -507,6 +536,10 @@ def assert_project_access(
 
 def assert_project_owner(config: DashboardConfig, project: dict[str, Any], principal: dict[str, str]) -> None:
     assert_project_access(config, project, principal, "manage_members")
+
+
+def is_project_owner_or_admin(project: dict[str, Any], principal: dict[str, str]) -> bool:
+    return principal.get("user_id") == project.get("owner_user_id") or principal.get("role") == "admin"
 
 
 def list_project_members(config: DashboardConfig, project: dict[str, Any], principal: dict[str, str]) -> dict[str, Any]:
@@ -910,6 +943,227 @@ def registered_output_path(config: DashboardConfig, run: dict[str, Any], output_
     if path.suffix.lower() not in {".tif", ".tiff", ".geojson", ".json", ".png", ".md"}:
         raise HTTPException(status_code=404, detail="Output not found")
     return path
+
+
+def report_markdown_path(config: DashboardConfig, run: dict[str, Any]) -> Path:
+    try:
+        path = registered_output_path(config, run, REPORT_COMMENT_OUTPUT_KEY)
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            raise HTTPException(status_code=404, detail="Report not found") from exc
+        raise
+    if path.suffix.lower() != ".md" or not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Report not found")
+    return path
+
+
+def sanitize_comment_markdown(markdown: str) -> tuple[str, str]:
+    body_markdown = (markdown or "").strip()
+    if not body_markdown:
+        raise HTTPException(status_code=400, detail="Comment body is required")
+    if len(body_markdown) > COMMENT_MARKDOWN_MAX_LENGTH:
+        raise HTTPException(status_code=400, detail="Comment body is too long")
+    body_markdown = re.sub(r"(?i)javascript\s*:", "blocked:", body_markdown)
+    html = MarkdownIt("commonmark", {"html": False, "linkify": False}).render(body_markdown)
+    clean_html = bleach.clean(
+        html,
+        tags=COMMENT_MARKDOWN_TAGS,
+        attributes=COMMENT_MARKDOWN_ATTRIBUTES,
+        protocols={"http", "https", "mailto"},
+        strip=True,
+    )
+    return body_markdown, clean_html
+
+
+def read_report_comments(config: DashboardConfig, run_id: str) -> dict[str, Any]:
+    path = report_comments_path(config, run_id)
+    if not path.exists():
+        return {"run_id": safe_id(run_id, "run_id"), "comments": []}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write_report_comments(config: DashboardConfig, run_id: str, data: dict[str, Any]) -> None:
+    data["run_id"] = safe_id(run_id, "run_id")
+    data["comments"] = sorted(data.get("comments", []), key=lambda comment: comment.get("created_at", ""))
+    write_json(report_comments_path(config, run_id), data)
+
+
+def _public_comment_author(config: DashboardConfig, user_id: str) -> dict[str, Any]:
+    user = get_user_by_id(config, user_id)
+    if user:
+        return public_user(user)
+    return {"id": user_id, "email": "", "display_name": user_id}
+
+
+def public_report_comment(config: DashboardConfig, comment: dict[str, Any]) -> dict[str, Any]:
+    return {**comment, "author": _public_comment_author(config, comment["author_user_id"])}
+
+
+def list_report_comments(
+    config: DashboardConfig,
+    run: dict[str, Any],
+    project: dict[str, Any],
+    principal: dict[str, str],
+) -> dict[str, Any]:
+    assert_project_access(config, project, principal, "view")
+    report_markdown_path(config, run)
+    comments = [
+        public_report_comment(config, comment)
+        for comment in read_report_comments(config, run["run_id"]).get("comments", [])
+        if comment.get("status") != "deleted"
+    ]
+    return {
+        "project_id": project["id"],
+        "run_id": run["run_id"],
+        "output_key": REPORT_COMMENT_OUTPUT_KEY,
+        "comments": comments,
+    }
+
+
+def create_report_comment(
+    config: DashboardConfig,
+    run: dict[str, Any],
+    project: dict[str, Any],
+    principal: dict[str, str],
+    body_markdown: str,
+) -> dict[str, Any]:
+    assert_project_access(config, project, principal, "view")
+    report_markdown_path(config, run)
+    body_markdown, body_html = sanitize_comment_markdown(body_markdown)
+    now = utc_now()
+    comment = {
+        "id": uuid4().hex,
+        "project_id": project["id"],
+        "run_id": run["run_id"],
+        "output_key": REPORT_COMMENT_OUTPUT_KEY,
+        "author_user_id": principal["user_id"],
+        "body_markdown": body_markdown,
+        "body_html": body_html,
+        "status": "open",
+        "created_at": now,
+        "updated_at": now,
+        "resolved_at": None,
+        "resolved_by_user_id": None,
+        "deleted_at": None,
+        "deleted_by_user_id": None,
+        "edit_history": [],
+    }
+    data = read_report_comments(config, run["run_id"])
+    data.setdefault("comments", []).append(comment)
+    write_report_comments(config, run["run_id"], data)
+    append_project_audit_event(
+        config,
+        project["id"],
+        "report_comment.created",
+        principal["user_id"],
+        {"run_id": run["run_id"], "comment_id": comment["id"], "output_key": REPORT_COMMENT_OUTPUT_KEY},
+    )
+    return public_report_comment(config, comment)
+
+
+def _find_report_comment(data: dict[str, Any], comment_id: str) -> dict[str, Any]:
+    safe_comment_id = safe_id(comment_id, "comment_id")
+    for comment in data.get("comments", []):
+        if comment.get("id") == safe_comment_id and comment.get("status") != "deleted":
+            return comment
+    raise HTTPException(status_code=404, detail="Comment not found")
+
+
+def get_report_comment(
+    config: DashboardConfig,
+    run: dict[str, Any],
+    project: dict[str, Any],
+    principal: dict[str, str],
+    comment_id: str,
+) -> dict[str, Any]:
+    assert_project_access(config, project, principal, "view")
+    report_markdown_path(config, run)
+    comment = _find_report_comment(read_report_comments(config, run["run_id"]), comment_id)
+    return public_report_comment(config, comment)
+
+
+def update_report_comment(
+    config: DashboardConfig,
+    run: dict[str, Any],
+    project: dict[str, Any],
+    principal: dict[str, str],
+    comment_id: str,
+    body_markdown: str,
+) -> dict[str, Any]:
+    assert_project_access(config, project, principal, "view")
+    report_markdown_path(config, run)
+    data = read_report_comments(config, run["run_id"])
+    comment = _find_report_comment(data, comment_id)
+    if comment.get("author_user_id") != principal.get("user_id"):
+        raise HTTPException(status_code=403, detail="Comment permission denied")
+    body_markdown, body_html = sanitize_comment_markdown(body_markdown)
+    now = utc_now()
+    comment.setdefault("edit_history", []).append(
+        {
+            "edited_at": now,
+            "edited_by_user_id": principal["user_id"],
+            "previous_body_markdown": comment["body_markdown"],
+            "previous_body_html": comment["body_html"],
+        }
+    )
+    comment["body_markdown"] = body_markdown
+    comment["body_html"] = body_html
+    comment["updated_at"] = now
+    write_report_comments(config, run["run_id"], data)
+    append_project_audit_event(
+        config,
+        project["id"],
+        "report_comment.edited",
+        principal["user_id"],
+        {"run_id": run["run_id"], "comment_id": comment["id"], "output_key": REPORT_COMMENT_OUTPUT_KEY},
+    )
+    return public_report_comment(config, comment)
+
+
+def moderate_report_comment(
+    config: DashboardConfig,
+    run: dict[str, Any],
+    project: dict[str, Any],
+    principal: dict[str, str],
+    comment_id: str,
+    action: str,
+) -> dict[str, Any]:
+    assert_project_access(config, project, principal, "view")
+    report_markdown_path(config, run)
+    if not is_project_owner_or_admin(project, principal):
+        raise HTTPException(status_code=403, detail="Comment moderation permission denied")
+    if action not in {"resolve", "reopen", "delete"}:
+        raise HTTPException(status_code=400, detail="Invalid comment moderation action")
+    data = read_report_comments(config, run["run_id"])
+    comment = _find_report_comment(data, comment_id)
+    now = utc_now()
+    if action == "resolve":
+        comment["status"] = "resolved"
+        comment["resolved_at"] = now
+        comment["resolved_by_user_id"] = principal["user_id"]
+        event_type = "report_comment.resolved"
+    elif action == "reopen":
+        comment["status"] = "open"
+        comment["resolved_at"] = None
+        comment["resolved_by_user_id"] = None
+        event_type = "report_comment.reopened"
+    else:
+        comment["status"] = "deleted"
+        comment["deleted_at"] = now
+        comment["deleted_by_user_id"] = principal["user_id"]
+        event_type = "report_comment.deleted"
+    comment["updated_at"] = now
+    write_report_comments(config, run["run_id"], data)
+    append_project_audit_event(
+        config,
+        project["id"],
+        event_type,
+        principal["user_id"],
+        {"run_id": run["run_id"], "comment_id": comment["id"], "output_key": REPORT_COMMENT_OUTPUT_KEY},
+    )
+    if action == "delete":
+        return {"project_id": project["id"], "run_id": run["run_id"], "deleted_comment_id": comment["id"]}
+    return public_report_comment(config, comment)
 
 
 def output_artifact_record(config: DashboardConfig, run: dict[str, Any], output_key: str) -> dict[str, Any]:

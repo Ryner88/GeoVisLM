@@ -42,6 +42,23 @@ def auth(user: str = "user-1", role: str = "owner") -> dict[str, str]:
     return {"authorization": "Bearer test-token", "x-geovis-user": user, "x-geovis-role": role}
 
 
+def seed_dashboard_user(app_module, user_id: str, email: str, display_name: str) -> dict:
+    operations = sys.modules["geovis_lm.dashboard.operations"]
+    user = {
+        "id": user_id,
+        "email": email,
+        "password_hash": "unused",
+        "display_name": display_name,
+        "role": "owner",
+        "active": True,
+        "created_at": "2026-08-01T00:00:00+00:00",
+        "updated_at": "2026-08-01T00:00:00+00:00",
+        "activated_at": "2026-08-01T00:00:00+00:00",
+    }
+    operations.write_json(operations.user_path(app_module.CONFIG, email), user)
+    return user
+
+
 def b64(path: Path) -> str:
     return base64.b64encode(path.read_bytes()).decode("ascii")
 
@@ -203,26 +220,9 @@ def test_first_party_signup_login_logout_and_user_isolation(app_module):
 
 
 def test_project_invitations_grant_read_only_access_and_can_be_revoked(app_module):
-    operations = sys.modules["geovis_lm.dashboard.operations"]
-
-    def seed_user(user_id: str, email: str, display_name: str) -> dict:
-        user = {
-            "id": user_id,
-            "email": email,
-            "password_hash": "unused",
-            "display_name": display_name,
-            "role": "owner",
-            "active": True,
-            "created_at": "2026-08-01T00:00:00+00:00",
-            "updated_at": "2026-08-01T00:00:00+00:00",
-            "activated_at": "2026-08-01T00:00:00+00:00",
-        }
-        operations.write_json(operations.user_path(app_module.CONFIG, email), user)
-        return user
-
-    alice = seed_user("alice", "alice@example.com", "Alice")
-    bob = seed_user("bob", "bob@example.com", "Bob")
-    seed_user("charlie", "charlie@example.com", "Charlie")
+    alice = seed_dashboard_user(app_module, "alice", "alice@example.com", "Alice")
+    bob = seed_dashboard_user(app_module, "bob", "bob@example.com", "Bob")
+    seed_dashboard_user(app_module, "charlie", "charlie@example.com", "Charlie")
 
     project_response = request(
         app_module.app,
@@ -300,6 +300,180 @@ def test_project_invitations_grant_read_only_access_and_can_be_revoked(app_modul
         "project.member_revoked",
     ]
     assert audit.json()["events"][0]["actor_user_id"] == alice["id"]
+
+
+def test_report_comments_permissions_history_sanitization_and_audit(app_module):
+    operations = sys.modules["geovis_lm.dashboard.operations"]
+    owner = seed_dashboard_user(app_module, "owner-user", "owner@example.com", "Owner")
+    collaborator = seed_dashboard_user(app_module, "collab-user", "collab@example.com", "Collaborator")
+    outsider = seed_dashboard_user(app_module, "outside-user", "outside@example.com", "Outsider")
+
+    project_response = request(
+        app_module.app,
+        "post",
+        "/api/projects",
+        headers=auth(owner["id"]),
+        json={"name": "Commented Project"},
+    )
+    assert project_response.status_code == 200
+    project = project_response.json()
+    run_response = request(
+        app_module.app,
+        "post",
+        f"/api/projects/{project['id']}/runs",
+        headers=auth(owner["id"]),
+        json={"name": "Report Run", "workflow_type": "terrain"},
+    )
+    assert run_response.status_code == 200
+    run = run_response.json()
+    report_path = operations.run_dir(app_module.CONFIG, run["run_id"]) / "reports" / "terrain_analysis.md"
+    report_path.write_text("# Terrain Report\n", encoding="utf-8")
+    operations.update_run(
+        app_module.CONFIG,
+        run["run_id"],
+        status="reported",
+        status_message="Report generated",
+        outputs={"report_md": str(report_path)},
+    )
+
+    no_report_project, no_report_run = create_project_and_run(app_module.app)
+    no_report = request(
+        app_module.app,
+        "get",
+        f"/api/runs/{no_report_run['run_id']}/report/comments",
+        headers=auth(),
+    )
+    assert no_report.status_code == 404
+    assert no_report.json()["detail"] == "Report not found"
+    assert no_report_project["id"] != project["id"]
+
+    invite = request(
+        app_module.app,
+        "post",
+        f"/api/projects/{project['id']}/invitations",
+        headers=auth(owner["id"]),
+        json={"email": collaborator["email"]},
+    )
+    assert invite.status_code == 200
+
+    owner_comment = request(
+        app_module.app,
+        "post",
+        f"/api/runs/{run['run_id']}/report/comments",
+        headers=auth(owner["id"]),
+        json={"body_markdown": "**Review** this output."},
+    )
+    assert owner_comment.status_code == 200
+    assert owner_comment.json()["author_user_id"] == owner["id"]
+
+    create = request(
+        app_module.app,
+        "post",
+        f"/api/runs/{run['run_id']}/report/comments",
+        headers=auth(collaborator["id"]),
+        json={"body_markdown": "**Looks good** <script>alert(1)</script> [bad](javascript:alert(1))"},
+    )
+    assert create.status_code == 200
+    comment = create.json()
+    assert comment["author_user_id"] == collaborator["id"]
+    assert "<strong>Looks good</strong>" in comment["body_html"]
+    assert "<script" not in comment["body_html"]
+    assert "javascript:" not in comment["body_html"]
+
+    outsider_list = request(
+        app_module.app,
+        "get",
+        f"/api/runs/{run['run_id']}/report/comments",
+        headers=auth(outsider["id"]),
+    )
+    assert outsider_list.status_code == 404
+
+    owner_edit_collaborator = request(
+        app_module.app,
+        "patch",
+        f"/api/runs/{run['run_id']}/report/comments/{comment['id']}",
+        headers=auth(owner["id"]),
+        json={"body_markdown": "Owner edit"},
+    )
+    assert owner_edit_collaborator.status_code == 403
+
+    edited = request(
+        app_module.app,
+        "patch",
+        f"/api/runs/{run['run_id']}/report/comments/{comment['id']}",
+        headers=auth(collaborator["id"]),
+        json={"body_markdown": "Updated **note**"},
+    )
+    assert edited.status_code == 200
+    assert edited.json()["body_markdown"] == "Updated **note**"
+    assert edited.json()["edit_history"][0]["previous_body_markdown"] == comment["body_markdown"]
+    assert edited.json()["edit_history"][0]["edited_by_user_id"] == collaborator["id"]
+
+    collaborator_resolve = request(
+        app_module.app,
+        "post",
+        f"/api/runs/{run['run_id']}/report/comments/{comment['id']}/resolve",
+        headers=auth(collaborator["id"]),
+    )
+    assert collaborator_resolve.status_code == 403
+
+    resolved = request(
+        app_module.app,
+        "post",
+        f"/api/runs/{run['run_id']}/report/comments/{comment['id']}/resolve",
+        headers=auth(owner["id"]),
+    )
+    assert resolved.status_code == 200
+    assert resolved.json()["status"] == "resolved"
+    assert resolved.json()["resolved_by_user_id"] == owner["id"]
+
+    reopened = request(
+        app_module.app,
+        "post",
+        f"/api/runs/{run['run_id']}/report/comments/{comment['id']}/reopen",
+        headers=auth(owner["id"]),
+    )
+    assert reopened.status_code == 200
+    assert reopened.json()["status"] == "open"
+    assert reopened.json()["resolved_by_user_id"] is None
+
+    deleted = request(
+        app_module.app,
+        "delete",
+        f"/api/runs/{run['run_id']}/report/comments/{comment['id']}",
+        headers=auth(owner["id"]),
+    )
+    assert deleted.status_code == 200
+    assert deleted.json()["deleted_comment_id"] == comment["id"]
+
+    hidden_comment = request(
+        app_module.app,
+        "get",
+        f"/api/runs/{run['run_id']}/report/comments/{comment['id']}",
+        headers=auth(collaborator["id"]),
+    )
+    assert hidden_comment.status_code == 404
+
+    remaining = request(
+        app_module.app,
+        "get",
+        f"/api/runs/{run['run_id']}/report/comments",
+        headers=auth(owner["id"]),
+    )
+    assert remaining.status_code == 200
+    assert [item["id"] for item in remaining.json()["comments"]] == [owner_comment.json()["id"]]
+
+    audit = request(app_module.app, "get", f"/api/projects/{project['id']}/audit-events", headers=auth(owner["id"]))
+    assert audit.status_code == 200
+    comment_events = [event["event_type"] for event in audit.json()["events"] if event["event_type"].startswith("report_comment.")]
+    assert comment_events == [
+        "report_comment.created",
+        "report_comment.created",
+        "report_comment.edited",
+        "report_comment.resolved",
+        "report_comment.reopened",
+        "report_comment.deleted",
+    ]
 
 
 def test_signup_invite_code_is_enforced(tmp_path, monkeypatch):

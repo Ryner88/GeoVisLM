@@ -30,11 +30,16 @@ Build:
 
 Current slice:
 
-* Implement existing-account project invitations, owner-controlled revocation,
-  read-only collaborator access, enumeration-resistant authorization failures,
-  and project membership audit events.
-* Leave report comments, full cross-tenant regression testing, and Prime
-  deployment for follow-up slices before marking the task `[DONE]`.
+* Project memberships and invitations are implemented and committed:
+  existing-account invitations, owner-controlled revocation, read-only
+  collaborator access, enumeration-resistant authorization failures, and
+  project membership audit events.
+* Report comments are implemented: Markdown comments attached to generated
+  reports, author/timestamp metadata, immutable edit history, sanitized HTML
+  rendering, owner moderation, concealed inaccessible resources, and audit
+  events for create/edit/resolve/reopen/delete.
+* Keep this task `[IN-PROGRESS]` until the final cross-tenant regression,
+  merge, Prime deployment, and production smoke/readiness slice passes.
 
 Acceptance criteria:
 

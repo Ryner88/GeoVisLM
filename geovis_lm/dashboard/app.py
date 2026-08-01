@@ -21,6 +21,7 @@ from geovis_lm.dashboard.operations import (
     create_dashboard_session,
     create_job_record,
     create_project,
+    create_report_comment,
     create_run_record,
     create_run_folders,
     create_user,
@@ -31,10 +32,12 @@ from geovis_lm.dashboard.operations import (
     get_user_by_id,
     ingest_base64_files,
     get_job,
+    get_report_comment,
     list_jobs,
     list_output_artifacts,
     invite_project_member,
     list_project_audit_events,
+    list_report_comments,
     list_project_members,
     list_projects,
     list_runs,
@@ -42,10 +45,12 @@ from geovis_lm.dashboard.operations import (
     mime_type_for_path,
     principal_from_request,
     public_user,
+    moderate_report_comment,
     revoke_project_member,
     registered_output_path,
     run_dir,
     run_metadata_path,
+    update_report_comment,
     update_run,
     valid_vector_inputs,
     write_json,
@@ -390,6 +395,14 @@ class ProjectCreate(BaseModel):
 class ProjectInvitationCreate(BaseModel):
     email: str = Field(min_length=3, max_length=320)
     role: str = "viewer"
+
+
+class ReportCommentCreate(BaseModel):
+    body_markdown: str = Field(min_length=1, max_length=10000)
+
+
+class ReportCommentUpdate(BaseModel):
+    body_markdown: str = Field(min_length=1, max_length=10000)
 
 
 class RunCreate(BaseModel):
@@ -1050,6 +1063,56 @@ def generate_report(run_id: str, request: Request) -> dict:
     metadata = update_run(CONFIG, run_id, status="reported", status_message="Report generated", outputs=outputs)
     metadata["report_url"] = f"/api/runs/{run_id}/outputs/report_md/download"
     return metadata
+
+
+def report_comment_context(run_id: str, request: Request) -> tuple[dict, dict, dict[str, str]]:
+    principal = principal_from_request(request, CONFIG)
+    run = get_run(CONFIG, run_id)
+    project = project_for_run(run)
+    assert_project_access(CONFIG, project, principal, "view")
+    return run, project, principal
+
+
+@app.get("/api/runs/{run_id}/report/comments")
+def list_report_comments_api(run_id: str, request: Request) -> dict:
+    run, project, principal = report_comment_context(run_id, request)
+    return list_report_comments(CONFIG, run, project, principal)
+
+
+@app.post("/api/runs/{run_id}/report/comments")
+def create_report_comment_api(run_id: str, payload: ReportCommentCreate, request: Request) -> dict:
+    run, project, principal = report_comment_context(run_id, request)
+    return create_report_comment(CONFIG, run, project, principal, payload.body_markdown)
+
+
+@app.get("/api/runs/{run_id}/report/comments/{comment_id}")
+def get_report_comment_api(run_id: str, comment_id: str, request: Request) -> dict:
+    run, project, principal = report_comment_context(run_id, request)
+    return get_report_comment(CONFIG, run, project, principal, comment_id)
+
+
+@app.patch("/api/runs/{run_id}/report/comments/{comment_id}")
+def update_report_comment_api(run_id: str, comment_id: str, payload: ReportCommentUpdate, request: Request) -> dict:
+    run, project, principal = report_comment_context(run_id, request)
+    return update_report_comment(CONFIG, run, project, principal, comment_id, payload.body_markdown)
+
+
+@app.post("/api/runs/{run_id}/report/comments/{comment_id}/resolve")
+def resolve_report_comment_api(run_id: str, comment_id: str, request: Request) -> dict:
+    run, project, principal = report_comment_context(run_id, request)
+    return moderate_report_comment(CONFIG, run, project, principal, comment_id, "resolve")
+
+
+@app.post("/api/runs/{run_id}/report/comments/{comment_id}/reopen")
+def reopen_report_comment_api(run_id: str, comment_id: str, request: Request) -> dict:
+    run, project, principal = report_comment_context(run_id, request)
+    return moderate_report_comment(CONFIG, run, project, principal, comment_id, "reopen")
+
+
+@app.delete("/api/runs/{run_id}/report/comments/{comment_id}")
+def delete_report_comment_api(run_id: str, comment_id: str, request: Request) -> dict:
+    run, project, principal = report_comment_context(run_id, request)
+    return moderate_report_comment(CONFIG, run, project, principal, comment_id, "delete")
 
 
 @app.get("/api/runs")
