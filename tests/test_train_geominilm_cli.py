@@ -167,7 +167,7 @@ def test_train_geominilm_validation_experiment_writes_honest_baseline_reports(tm
     production_decision = json.loads((eval_dir / "production_decision.json").read_text(encoding="utf-8"))
 
     assert metadata["training_status"] == "validation_experiment_complete"
-    assert metadata["training"]["training_records"] == 20
+    assert metadata["training"]["training_records"] == 29
     assert metadata["training"]["validation_records"] == 14
     assert comparison["primary_metric"] == "trained_validation_score"
     assert comparison["pass_threshold"] == 0.75

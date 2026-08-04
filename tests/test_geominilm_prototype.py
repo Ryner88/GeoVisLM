@@ -73,6 +73,17 @@ def test_leave_one_out_evaluation_excludes_heldout_examples_from_training(tmp_pa
         assert fold.checkpoint_path.exists()
 
 
+def test_training_derived_development_evaluation_clears_model_selection_floor(tmp_path):
+    development_examples = load_geominilm_dataset(STARTER_DATASET) + load_geominilm_dataset(TRAINING_EXPANSION)
+    result = run_leave_one_out_evaluation(development_examples, tmp_path / "development_folds")
+
+    assert len(result.folds) == 29
+    assert result.comparison["heldout_summary_score"] >= 0.75
+    assert result.baseline_report.summary_score == 1.0
+    for fold in result.folds:
+        assert fold.record_id not in fold.training_record_ids
+
+
 def test_validation_experiment_uses_disjoint_frozen_validation_set(tmp_path):
     training_examples = load_geominilm_dataset(STARTER_DATASET) + load_geominilm_dataset(TRAINING_EXPANSION)
     validation_examples = load_geominilm_dataset(VALIDATION_DATASET)
@@ -84,7 +95,7 @@ def test_validation_experiment_uses_disjoint_frozen_validation_set(tmp_path):
     assert result.comparison["trained_validation_score"] >= result.comparison["honest_baseline_score"]
     assert result.comparison["delta_vs_reference_heldout"] > 0.0
     assert result.comparison["validation_record_count"] == 14
-    assert result.comparison["failure_count"] == 11
+    assert result.comparison["failure_count"] == 9
     assert result.comparison["production_decision"]["dashboard_integration_allowed"] is False
     assert all(prediction["id"] != prediction["source_checkpoint_record_id"] for prediction in result.predictions)
 

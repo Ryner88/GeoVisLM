@@ -81,7 +81,7 @@ def test_validation_and_training_expansion_are_disjoint_and_valid():
     training_ids = {example.id for example in starter + expansion}
     validation_ids = {example.id for example in validation}
 
-    assert len(expansion) == 8
+    assert len(expansion) == 17
     assert len(validation) == 14
     assert training_ids.isdisjoint(validation_ids)
     assert {example.domain for example in validation} == {"gis", "qgis", "paraview", "reporting"}

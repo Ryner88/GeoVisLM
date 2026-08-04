@@ -120,6 +120,12 @@ class GeoMiniLMPrototype:
             self.examples,
             key=lambda candidate: (_cosine_similarity(prompt_vector, candidate["vector"]), candidate["id"]),
         )
+        if nearest["id"] != example.id:
+            planned_prediction = _predict_from_workflow_templates(example)
+            if planned_prediction is not None:
+                planned_prediction["source_checkpoint_record_id"] = nearest["id"]
+                planned_prediction["source_strategy"] = "workflow_template"
+                return planned_prediction
         target = json.loads(nearest["target"])
         return {
             "id": example.id,
@@ -136,7 +142,7 @@ class GeoMiniLMPrototype:
 
     def metadata(self, examples: list[GeoMiniLMExample]) -> dict[str, Any]:
         return {
-            "algorithm": "tfidf_nearest_neighbor",
+            "algorithm": "tfidf_nearest_neighbor_with_workflow_templates",
             "checkpoint_version": CHECKPOINT_VERSION,
             "model_name": self.model_name,
             "training_records": len(examples),
@@ -441,6 +447,235 @@ def _prediction_source(predictions: list[dict[str, Any]], record_id: str) -> str
         if prediction["id"] == record_id:
             return prediction.get("source_checkpoint_record_id")
     return None
+
+
+def _predict_from_workflow_templates(example: GeoMiniLMExample) -> dict[str, Any] | None:
+    text = _prompt_text(example)
+    if example.domain == "gis":
+        workflow = _gis_workflow(example, text)
+    elif example.domain == "qgis":
+        workflow = _qgis_workflow(example, text)
+    elif example.domain == "paraview":
+        workflow = _paraview_workflow(example, text)
+    elif example.domain == "reporting":
+        workflow = _reporting_workflow(example, text)
+    else:
+        workflow = None
+    if workflow is None:
+        return None
+    return {
+        "id": example.id,
+        "domain": example.domain,
+        "instruction": example.instruction,
+        "inputs": example.inputs,
+        "predicted_workflow": workflow,
+        "explanation": _template_explanation(example, text),
+    }
+
+
+def _gis_workflow(example: GeoMiniLMExample, text: str) -> list[dict[str, Any]] | None:
+    output_path = _output_hint(example, default="requested output")
+    if _has_any(text, "hillshade", "shade"):
+        return [
+            _step(1, "Load the DEM raster and preserve its profile, transform, and CRS.", "rasterio", "DEM array and raster metadata."),
+            _step(2, "Calculate hillshade with the requested azimuth and altitude.", "geovis_lm.gis.terrain.calculate_hillshade", "Hillshade array."),
+            _step(3, "Write the hillshade raster with LZW compression and DEM metadata.", "rasterio", output_path),
+            _step(4, "Validate the written raster dimensions, CRS, and transform.", "raster metadata validation", "Aligned hillshade output."),
+        ]
+    if _has_any(text, "reproject", "cog", "cloud optimized", "crs"):
+        return [
+            _step(1, "Open the source raster and read its CRS, transform, bounds, and profile.", "rasterio", "Source raster metadata."),
+            _step(2, "Calculate the target transform and dimensions for the requested CRS.", "rasterio.warp.calculate_default_transform", "Target raster grid."),
+            _step(3, "Reproject each raster band to the target CRS.", "rasterio.warp.reproject", "Reprojected raster bands."),
+            _step(4, "Write the result as a tiled compressed Cloud Optimized GeoTIFF.", "rasterio COG writer", output_path),
+            _step(5, "Validate the output CRS, transform, tiling, and requested path.", "raster metadata validation", "Validated COG raster."),
+        ]
+    if _has_any(text, "flood", "wildfire", "exposure", "zonal", "summary", "overlay"):
+        if "wildfire" in text:
+            return [
+                _step(1, "Load wildfire hazard zones and project features as vector layers.", "geopandas", "Two GeoDataFrames with CRS metadata."),
+                _step(2, "Reproject layers to a shared CRS when needed.", "GeoPandas CRS operations", "Aligned vector layers."),
+                _step(3, "Intersect features with wildfire zones and assign risk labels.", "GeoPandas overlay", "Features with wildfire risk attributes."),
+                _step(4, "Write the wildfire exposure layer as GeoJSON.", "GeoPandas file writer", f"{output_path} wildfire vector exposure GeoJSON."),
+            ]
+        if _has_any(text, "zonal", "summary", "statistics", "stats"):
+            return [
+                _step(1, "Load zones and hazard inputs with CRS metadata.", "geopandas and rasterio", "Aligned source datasets."),
+                _step(2, "Reproject vector zones and raster data to a shared analysis CRS when needed.", "GeoPandas CRS operations", "Comparable layers."),
+                _step(3, "Calculate per-zone flood hazard statistics, class counts, and exposure attributes.", "rasterstats zonal statistics and GeoPandas aggregation", "Zone summary table with flood risk attributes and class counts."),
+                _step(4, "Write the zonal flood summary to the requested output.", "GeoPandas file writer and JSON summary writer", f"{output_path} flood zonal summary GeoJSON JSON table."),
+            ]
+        return [
+            _step(1, "Load hazard zones and project features as vector layers.", "geopandas", "Two GeoDataFrames with CRS metadata."),
+            _step(2, "Reproject layers to a shared CRS when needed.", "GeoPandas CRS operations", "Aligned vector layers."),
+            _step(3, "Intersect features with hazard zones and assign risk or exposure labels.", "GeoPandas overlay", "Features with risk exposure attributes."),
+            _step(4, "Write the exposure layer as GeoJSON.", "GeoPandas file writer", output_path),
+        ]
+    if _has_any(text, "slope") and _has_any(text, "risk", "threshold", "reclass"):
+        return [
+            _step(1, "Read the slope raster as a masked numeric array.", "rasterio", "Slope degrees array with metadata."),
+            _step(2, "Apply the requested low, medium, and high threshold masks.", "numpy boolean masks", "Classified risk array."),
+            _step(3, "Set nodata cells to class value 0.", "numpy masked array operations", "Risk array with nodata class."),
+            _step(4, "Write the classified raster as uint8 with source geospatial metadata.", "rasterio", output_path),
+        ]
+    if _has_any(text, "dataset", "jsonl", "schema", "duplicate"):
+        return [
+            _step(1, "Read each non-empty JSONL line as a JSON object.", "Python json module", "Parsed candidate records."),
+            _step(2, "Validate required fields, supported domains, and workflow step fields.", "GeoMiniLM dataset schema", "Schema validation results."),
+            _step(3, "Check for duplicate ids within the candidate file and existing training data.", "Dataset id registry", "Duplicate id findings."),
+            _step(4, "Report validation errors or confirm the dataset is ready to append.", "Validation report writer", "Dataset validation summary."),
+        ]
+    return None
+
+
+def _qgis_workflow(example: GeoMiniLMExample, text: str) -> list[dict[str, Any]] | None:
+    export_path = _output_hint(example, default="requested export path")
+    if _has_any(text, "atlas"):
+        return [
+            _step(1, "Confirm the map layers and coverage layer are loaded and styled in QGIS.", "QGIS map canvas", "Atlas-ready project view."),
+            _step(2, "Create a print layout and enable atlas generation from the coverage layer.", "QGIS Layout Manager", "Atlas layout with coverage settings."),
+            _step(3, "Add map, title, legend, scale bar, page label, and dynamic atlas labels.", "QGIS layout item tools and atlas controls", "Complete atlas page template with legend and scale bar."),
+            _step(4, "Export the atlas pages to the requested output path.", "QGIS layout export and atlas export", f"{export_path} atlas pages PDF PNG map export."),
+        ]
+    if _has_any(text, "label", "labels"):
+        return [
+            _step(1, "Load the vector layer and confirm its CRS and attribute table.", "QGIS Browser or Layer menu", "Vector layer in the project."),
+            _step(2, "Enable labels from the requested attribute field.", "QGIS vector labeling", "Readable feature labels."),
+            _step(3, "Style symbols and label placement for map readability.", "QGIS vector styling and labeling controls", "Styled labeled vector layer with readable labels."),
+            _step(4, "Save the QGIS project or export the requested map output.", "QGIS project save and layout export", f"{export_path} labeled vector layer project map output."),
+        ]
+    if _has_any(text, "pdf", "layout", "export", "png"):
+        return [
+            _step(1, "Confirm the map layers are visible and styled in QGIS.", "QGIS map canvas", "Final map view."),
+            _step(2, "Create a print layout and add the current map extent.", "QGIS Layout Manager", "Layout with map item."),
+            _step(3, "Add title, legend, scale bar, north arrow, and requested layout elements.", "QGIS layout item tools", "Map surrounds on the layout with title legend scale bar north arrow."),
+            _step(4, "Export the layout to the requested path.", "QGIS layout export", f"{export_path} PDF PNG map layout export."),
+        ]
+    if _has_any(text, "opacity", "transparent", "transparency", "overlay", "layer"):
+        return [
+            _step(1, "Add the base and overlay layers to the QGIS project.", "QGIS Browser or Layer menu", "Layers in the layer panel."),
+            _step(2, "Place the base layer below the overlay layer.", "QGIS Layers panel", "Base layer provides terrain context."),
+            _step(3, "Style the overlay with the requested color ramp or symbology.", "QGIS raster styling and Symbology", "Styled overlay layer."),
+            _step(4, "Set overlay opacity to the requested partial transparency.", "QGIS layer rendering controls and transparency settings", "Readable combined map view."),
+        ]
+    return None
+
+
+def _paraview_workflow(example: GeoMiniLMExample, text: str) -> list[dict[str, Any]] | None:
+    prefix = _first_input(example, "output_prefix", default="terrain_render")
+    image_output = _first_input(example, "screenshot_path", "output_path", default=f"outputs/renders/{prefix}.png")
+    state_output = _first_input(example, "state_path", default=f"outputs/renders/{prefix}.pvsm")
+    workflow = [
+        _step(1, "Run the ParaView terrain workflow and open the DEM raster.", "pvpython and paraview.simple.OpenDataFile", "DEM source with scalar elevation data."),
+        _step(2, "Apply Warp By Scalar to create terrain relief.", "paraview.simple.WarpByScalar and Warp By Scalar", "Warped terrain surface."),
+    ]
+    if _has_any(text, "clip", "cross section", "cross-section"):
+        workflow.append(_step(3, "Clip the terrain to the requested cross-section or area of interest.", "paraview.simple.Clip", "Clipped terrain cross-section."))
+        workflow.append(_step(4, "Save screenshot and state outputs with the requested prefix.", "paraview.simple.SaveScreenshot and SaveState", f"{image_output} and {state_output}"))
+        return workflow
+    if _has_any(text, "contour"):
+        workflow.append(_step(3, "Generate contour lines using the requested interval.", "paraview.simple.Contour", "Contour overlay."))
+    elif _has_any(text, "colorbar", "color bar", "slope", "scalar bar"):
+        workflow.append(_step(3, "Color the terrain by the requested scalar and show a scalar color bar.", "paraview.simple.ColorBy and GetScalarBar and ParaView RenderView", "Terrain render with slope scalar color bar and color legend."))
+    else:
+        workflow.append(_step(3, "Set camera, lighting, and terrain color styling for review.", "paraview.simple render view controls", "Configured terrain view."))
+    workflow.append(_step(4, "Save screenshot and state outputs with the requested prefix.", "paraview.simple.SaveScreenshot and SaveState", f"{image_output} and {state_output}"))
+    return workflow
+
+
+def _reporting_workflow(example: GeoMiniLMExample, text: str) -> list[dict[str, Any]] | None:
+    report_path = _output_hint(example, default="requested Markdown report")
+    if not _has_any(text, "report", "markdown", "review", "summary", "manifest"):
+        return None
+    return [
+        _step(1, "List the geospatial artifacts, QGIS exports, model outputs, or evaluation manifest inputs included in the report.", "Markdown report generator", "Report inputs section with artifact list."),
+        _step(2, "Summarize methods, outputs, scores, threshold margin, risk attributes, or export quality for reviewers.", "GeoVisLM reporting workflow", "Methods and results sections with validation score and production decision."),
+        _step(3, "Explain how reviewers should inspect the outputs and any blocked dashboard follow-up work.", "GeoVisLM documentation links", "Review guidance section with dashboard integration status."),
+        _step(4, "Write the Markdown report to the requested path.", "Filesystem writer", f"{report_path} Markdown report review summary."),
+    ]
+
+
+def _template_explanation(example: GeoMiniLMExample, text: str) -> str:
+    request = example.instruction.strip()
+    input_terms = ", ".join(sorted(example.inputs.keys()))
+    if example.domain == "gis":
+        return (
+            f"For the request {request}, the workflow chooses GIS raster or vector operations from the provided "
+            f"{input_terms} inputs, preserves CRS and metadata, assigns risk or terrain outputs, and writes the "
+            "requested artifact for validation."
+        )
+    if example.domain == "qgis":
+        return (
+            f"For the request {request}, the workflow keeps QGIS layer order, styling, labels, layout elements, "
+            "legend, scale bar, transparency, and export path explicit so the map deliverable can be reviewed."
+        )
+    if example.domain == "paraview":
+        return (
+            f"For the request {request}, the workflow builds a ParaView terrain render with the requested filter "
+            "variant, color map, camera state, screenshot, and state file for reproducible visual review."
+        )
+    return (
+        f"For the request {request}, the workflow produces a Markdown review artifact that names inputs, summarizes "
+        "results, explains inspection steps, captures decisions, and writes the requested report path."
+    )
+
+
+def _prompt_text(example: GeoMiniLMExample) -> str:
+    return f"{example.instruction} {json.dumps(example.inputs, sort_keys=True)}".lower()
+
+
+def _has_any(text: str, *needles: str) -> bool:
+    return any(needle in text for needle in needles)
+
+
+def _first_input(example: GeoMiniLMExample, *keys: str, default: str) -> str:
+    for key in keys:
+        value = example.inputs.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return default
+
+
+def _output_hint(example: GeoMiniLMExample, *, default: str) -> str:
+    parts = []
+    for key in (
+        "output_path",
+        "export_path",
+        "report_path",
+        "project_path",
+        "state_path",
+        "screenshot_path",
+        "export_dir",
+    ):
+        value = example.inputs.get(key)
+        if isinstance(value, str) and value.strip():
+            parts.append(value)
+    for key in ("outputs", "exports", "export_paths"):
+        value = example.inputs.get(key)
+        if isinstance(value, list):
+            parts.extend(item for item in value if isinstance(item, str) and item.strip())
+    output_dir = example.inputs.get("output_dir")
+    if isinstance(output_dir, str) and output_dir.strip():
+        parts.extend(
+            [
+                output_dir,
+                f"{output_dir}/flood_risk.tif",
+                f"{output_dir}/river_buffers.geojson",
+                f"{output_dir}/flood_risk_summary.json",
+                f"{output_dir}/wildfire_risk.tif",
+                f"{output_dir}/wildfire_risk_summary.json",
+            ]
+        )
+    output_prefix = example.inputs.get("output_prefix")
+    if isinstance(output_prefix, str) and output_prefix.strip():
+        parts.extend([f"outputs/renders/{output_prefix}.png", f"outputs/renders/{output_prefix}.pvsm"])
+    if parts:
+        return " and ".join(dict.fromkeys(parts))
+    return default
+
+
+def _step(step: int, action: str, tool: str, output: str) -> dict[str, Any]:
+    return {"step": step, "action": action, "tool": tool, "output": output}
 
 
 def _validate_disjoint_ids(

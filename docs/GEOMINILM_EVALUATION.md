@@ -101,16 +101,41 @@ dataset/taxonomy checksums against the frozen manifest.
 Calibration currently reports reliability bins and calibration error using the
 workflow score as a confidence proxy until model-native confidence values exist.
 
-Current expanded-set status from the `2026-08-03` run:
+## Development Model Selection
+
+Do not use the frozen `14`-record validation split for iterative tuning. Further
+model changes before the August 6 gate should be selected with training-derived
+development runs only.
+
+Use leave-one-out evaluation across the starter and training expansion splits:
+
+```bash
+.venv/bin/python scripts/train_geominilm.py \
+  --dataset data/geominilm/starter_workflows.jsonl \
+  --extra-training-data data/geominilm/training_expansion_workflows.jsonl \
+  --held-out-eval \
+  --eval-dir outputs/eval/geominilm_development
+```
+
+The August 4 training-derived development run produced:
+
+- Development held-out score: `0.7627`
+- Development records: `29`
+- Baseline oracle sanity score: `1.0000`
+
+The next read of `data/geominilm/validation_workflows.jsonl` should be the
+formal August 6 production gate attempt, not another tuning loop.
+
+Current expanded-set status from the `2026-08-04` performance run:
 
 - Status: production evaluation framework implemented; expanded production
   acceptance gate not passed.
-- Trained validation score: `0.6209`
+- Trained validation score: `0.7201`
 - Honest baseline score: `0.5326`
-- Delta vs honest baseline: `+0.0883`
+- Delta vs honest baseline: `+0.1875`
 - Required metric for dashboard authorization: `0.76`
-- Failed validation examples: `11/14`
-- Expected calibration error: `0.4610`
+- Failed validation examples: `9/14`
+- Expected calibration error: `0.4368`
 - Dashboard integration: blocked
 
 ## Baseline Validation

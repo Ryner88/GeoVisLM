@@ -21,7 +21,8 @@
         "dtype"
       ],
       "training_expansion_ids": [
-        "train-gis-hillshade-custom-013"
+        "train-gis-hillshade-custom-013",
+        "train-gis-reproject-cog-021"
       ],
       "validation_ids": [
         "validation-gis-hillshade-only-001",
@@ -44,7 +45,9 @@
       "training_expansion_ids": [
         "train-gis-flood-vector-014",
         "train-gis-risk-threshold-update-015",
-        "train-dataset-validation-020"
+        "train-dataset-validation-020",
+        "train-gis-wildfire-screening-022",
+        "train-gis-flood-zonal-summary-023"
       ],
       "validation_ids": [
         "validation-gis-wildfire-vector-002",
@@ -69,7 +72,9 @@
       ],
       "training_expansion_ids": [
         "train-qgis-slope-transparency-016",
-        "train-qgis-pdf-export-017"
+        "train-qgis-pdf-export-017",
+        "train-qgis-atlas-export-024",
+        "train-qgis-vector-labels-025"
       ],
       "validation_ids": [
         "validation-qgis-layer-transparency-003",
@@ -93,7 +98,9 @@
         "output prefix"
       ],
       "training_expansion_ids": [
-        "train-paraview-contour-overlay-018"
+        "train-paraview-contour-overlay-018",
+        "train-paraview-slope-colorbar-026",
+        "train-paraview-clip-section-027"
       ],
       "validation_ids": [
         "validation-paraview-contour-render-005",
@@ -113,7 +120,9 @@
         "audience"
       ],
       "training_expansion_ids": [
-        "train-report-combined-risk-019"
+        "train-report-combined-risk-019",
+        "train-report-qgis-review-028",
+        "train-report-evaluation-manifest-029"
       ],
       "validation_ids": [
         "validation-report-risk-summary-006",

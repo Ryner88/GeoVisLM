@@ -6,8 +6,9 @@ geospatial and scientific visualization model planned for GeoVisLM.
 ## Files
 
 - `starter_workflows.jsonl`: seed examples for GIS, QGIS, and ParaView workflow generation.
-- `training_expansion_workflows.jsonl`: additional stratified training examples
-  authored after the held-out failure analysis. These are training-only records.
+- `training_expansion_workflows.jsonl`: additional stratified training and
+  development examples authored after the held-out failure analysis. These are
+  training-only records.
 - `validation_workflows.jsonl`: frozen independently authored expanded
   validation examples. Do not copy these records into training data.
 - `evaluation_manifest.json`: versioned frozen split contract with dataset,
@@ -59,6 +60,10 @@ The starter dataset includes:
 
 This is seed data only. Production training should add more varied geography,
 file formats, failure cases, and evaluation labels.
+
+The training expansion currently adds `17` training-only records covering COG
+reprojection, wildfire and flood risk summaries, QGIS atlas and labeling
+exports, ParaView colorbar and clipping variants, and reporting review tasks.
 
 ## Evaluation Splits
 

@@ -1,24 +1,23 @@
 {
-  "created_at": "2026-08-03T00:00:00+00:00",
-  "dashboard_integration_rule": "blocked unless trained_validation_score is greater than honest_baseline_score on the frozen expanded validation set and clears the locked threshold margin",
-  "manifest_checksum": "959bfa10b96f4b3530e88930535e0e9d2cb07d25a958e16ccd89e2f7b1d24a58",
   "manifest_version": 1,
-  "minimum_threshold_margin": 0.01,
-  "minimum_validation_records": 12,
-  "near_duplicate_threshold": 0.85,
-  "pass_threshold": 0.75,
+  "created_at": "2026-08-03T00:00:00+00:00",
+  "status": "frozen",
   "primary_metric": "trained_validation_score",
-  "split_checksum": "aad5380f6bceb09ecdd86a6d0ebc1b96ae092c1e3115c1b0550f80ef3d8a0520",
+  "pass_threshold": 0.75,
+  "minimum_validation_records": 12,
+  "minimum_threshold_margin": 0.01,
+  "dashboard_integration_rule": "blocked unless trained_validation_score is greater than honest_baseline_score on the frozen expanded validation set and clears the locked threshold margin",
+  "near_duplicate_threshold": 0.85,
+  "taxonomy": {
+    "path": "data/geominilm/failure_taxonomy.json",
+    "sha256": "74f5c87c7d35c692f4bdbb106c731d9485c43629a6f25e8ff7b30fab0605796b"
+  },
   "splits": [
     {
-      "domain_counts": {
-        "gis": 4,
-        "paraview": 3,
-        "qgis": 4,
-        "reporting": 1
-      },
       "name": "starter",
+      "role": "training",
       "path": "data/geominilm/starter_workflows.jsonl",
+      "sha256": "a4903f291bcb67460731b18a8433c26b63f54b84ae2a00baaa10acbbd43499e0",
       "record_count": 12,
       "record_ids": [
         "gis-terrain-analysis-001",
@@ -34,19 +33,19 @@
         "workflow-qgis-to-paraview-011",
         "dataset-authoring-012"
       ],
-      "role": "training",
-      "sha256": "a4903f291bcb67460731b18a8433c26b63f54b84ae2a00baaa10acbbd43499e0"
-    },
-    {
       "domain_counts": {
         "gis": 4,
-        "paraview": 1,
-        "qgis": 2,
+        "paraview": 3,
+        "qgis": 4,
         "reporting": 1
-      },
+      }
+    },
+    {
       "name": "extra_training_1",
+      "role": "training",
       "path": "data/geominilm/training_expansion_workflows.jsonl",
-      "record_count": 8,
+      "sha256": "e15068d596f98bd9308a6a9f42096de6cc34707c3dd593dbe7cc8a32e4afe376",
+      "record_count": 17,
       "record_ids": [
         "train-gis-hillshade-custom-013",
         "train-gis-flood-vector-014",
@@ -55,20 +54,29 @@
         "train-qgis-pdf-export-017",
         "train-paraview-contour-overlay-018",
         "train-report-combined-risk-019",
-        "train-dataset-validation-020"
+        "train-dataset-validation-020",
+        "train-gis-reproject-cog-021",
+        "train-gis-wildfire-screening-022",
+        "train-gis-flood-zonal-summary-023",
+        "train-qgis-atlas-export-024",
+        "train-qgis-vector-labels-025",
+        "train-paraview-slope-colorbar-026",
+        "train-paraview-clip-section-027",
+        "train-report-qgis-review-028",
+        "train-report-evaluation-manifest-029"
       ],
-      "role": "training",
-      "sha256": "5db6cae79b4e380fe1f20bf4da9ad22d287fa93cffa0ab3ed9b2a5f3feaad4a0"
-    },
-    {
       "domain_counts": {
-        "gis": 4,
+        "gis": 7,
         "paraview": 3,
         "qgis": 4,
         "reporting": 3
-      },
+      }
+    },
+    {
       "name": "expanded_validation",
+      "role": "validation",
       "path": "data/geominilm/validation_workflows.jsonl",
+      "sha256": "57db85e9ae38c2a8b9e36c254a39fccef26540780942ac232e942e27484845bf",
       "record_count": 14,
       "record_ids": [
         "validation-gis-hillshade-only-001",
@@ -86,13 +94,14 @@
         "validation-report-qgis-export-review-013",
         "validation-report-eval-manifest-014"
       ],
-      "role": "validation",
-      "sha256": "57db85e9ae38c2a8b9e36c254a39fccef26540780942ac232e942e27484845bf"
+      "domain_counts": {
+        "gis": 4,
+        "paraview": 3,
+        "qgis": 4,
+        "reporting": 3
+      }
     }
   ],
-  "status": "frozen",
-  "taxonomy": {
-    "path": "data/geominilm/failure_taxonomy.json",
-    "sha256": "90b00c49ae488220f3872e8743dd581e6dc9b786bd7e61653a732cc101631528"
-  }
+  "split_checksum": "37c70721b8a9dc352cf56e0073c8434aaf38bdfb82dac3d79c137bc626887d61",
+  "manifest_checksum": "414d0eb5d9ba468c5eb9153d313365f241c6346032119301727ab8fd0aceb238"
 }
