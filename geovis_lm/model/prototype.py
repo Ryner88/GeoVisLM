@@ -10,6 +10,14 @@ from typing import Any
 from geovis_lm.eval.workflow_eval import EvaluationReport
 from geovis_lm.eval.workflow_eval import evaluate_records
 from geovis_lm.model.dataset import GeoMiniLMExample, TrainingPair, build_prompt, preprocess_examples
+from geovis_lm.model.evaluation_design import (
+    DEFAULT_MINIMUM_THRESHOLD_MARGIN,
+    DEFAULT_MINIMUM_VALIDATION_RECORDS,
+    DEFAULT_PRIMARY_METRIC,
+    DEFAULT_PRODUCTION_PASS_THRESHOLD,
+    build_calibration_report,
+    build_production_decision,
+)
 
 
 CHECKPOINT_VERSION = 1
@@ -208,23 +216,37 @@ def run_validation_experiment(
     *,
     model_name: str = "geominilm-token-retrieval-v1",
     reference_heldout_score: float = 0.4943,
+    primary_metric: str = DEFAULT_PRIMARY_METRIC,
+    pass_threshold: float = DEFAULT_PRODUCTION_PASS_THRESHOLD,
+    minimum_validation_records: int = DEFAULT_MINIMUM_VALIDATION_RECORDS,
+    minimum_threshold_margin: float = DEFAULT_MINIMUM_THRESHOLD_MARGIN,
 ) -> ValidationExperimentResult:
     _validate_disjoint_ids(training_examples, validation_examples)
     train_and_save_checkpoint(training_examples, checkpoint_path, model_name=model_name)
     model = GeoMiniLMPrototype.load(checkpoint_path)
     predictions = model.predict_many(validation_examples)
     expected_records = [example.to_record() for example in validation_examples]
-    trained_report = evaluate_records(expected_records, predictions)
+    trained_report = evaluate_records(expected_records, predictions, pass_threshold=pass_threshold)
 
     honest_baseline_predictions = build_domain_exemplar_baseline_predictions(training_examples, validation_examples)
-    honest_baseline_report = evaluate_records(expected_records, honest_baseline_predictions)
-    oracle_sanity_report = evaluate_records(expected_records, _oracle_baseline_predictions(validation_examples))
+    honest_baseline_report = evaluate_records(expected_records, honest_baseline_predictions, pass_threshold=pass_threshold)
+    oracle_sanity_report = evaluate_records(
+        expected_records,
+        _oracle_baseline_predictions(validation_examples),
+        pass_threshold=pass_threshold,
+    )
     comparison = compare_validation_reports(
         trained_report,
         honest_baseline_report,
         oracle_sanity_report,
         reference_heldout_score=reference_heldout_score,
+        primary_metric=primary_metric,
+        pass_threshold=pass_threshold,
+        minimum_validation_records=minimum_validation_records,
+        minimum_threshold_margin=minimum_threshold_margin,
     )
+    comparison["confidence_calibration"] = build_calibration_report(trained_report)
+    comparison["production_decision"] = build_production_decision(comparison)
     return ValidationExperimentResult(
         predictions=predictions,
         trained_report=trained_report,
@@ -269,6 +291,10 @@ def compare_validation_reports(
     oracle_sanity: EvaluationReport,
     *,
     reference_heldout_score: float,
+    primary_metric: str = DEFAULT_PRIMARY_METRIC,
+    pass_threshold: float = DEFAULT_PRODUCTION_PASS_THRESHOLD,
+    minimum_validation_records: int = DEFAULT_MINIMUM_VALIDATION_RECORDS,
+    minimum_threshold_margin: float = DEFAULT_MINIMUM_THRESHOLD_MARGIN,
 ) -> dict[str, Any]:
     trained_records = {record.record_id: record for record in trained.records}
     baseline_records = {record.record_id: record for record in honest_baseline.records}
@@ -291,6 +317,11 @@ def compare_validation_reports(
         if trained_record.findings:
             finding_examples.append(item)
     return {
+        "primary_metric": primary_metric,
+        "pass_threshold": pass_threshold,
+        "minimum_validation_records": minimum_validation_records,
+        "minimum_threshold_margin": minimum_threshold_margin,
+        "validation_record_count": trained.total_records,
         "trained_validation_score": round(trained.summary_score, 4),
         "honest_baseline_score": round(honest_baseline.summary_score, 4),
         "oracle_sanity_score": round(oracle_sanity.summary_score, 4),

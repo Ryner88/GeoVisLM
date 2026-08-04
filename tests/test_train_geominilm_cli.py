@@ -161,15 +161,25 @@ def test_train_geominilm_validation_experiment_writes_honest_baseline_reports(tm
     assert result.returncode == 0, result.stderr
     metadata = json.loads((output_dir / "validation_experiment_metadata.json").read_text(encoding="utf-8"))
     comparison = json.loads((eval_dir / "experiment_comparison.json").read_text(encoding="utf-8"))
+    split_validation = json.loads((eval_dir / "split_validation.json").read_text(encoding="utf-8"))
+    manifest_check = json.loads((eval_dir / "manifest_check.json").read_text(encoding="utf-8"))
+    calibration = json.loads((eval_dir / "confidence_calibration.json").read_text(encoding="utf-8"))
+    production_decision = json.loads((eval_dir / "production_decision.json").read_text(encoding="utf-8"))
 
     assert metadata["training_status"] == "validation_experiment_complete"
     assert metadata["training"]["training_records"] == 20
-    assert metadata["training"]["validation_records"] == 6
+    assert metadata["training"]["validation_records"] == 14
+    assert comparison["primary_metric"] == "trained_validation_score"
+    assert comparison["pass_threshold"] == 0.75
+    assert comparison["minimum_validation_records"] == 12
+    assert comparison["minimum_threshold_margin"] == 0.01
+    assert comparison["validation_record_count"] == 14
     assert comparison["oracle_sanity_score"] == 1.0
     assert comparison["reference_heldout_score"] == 0.4943
-    assert comparison["failure_count"] <= 3
+    assert comparison["confidence_calibration"] == calibration
+    assert comparison["production_decision"] == production_decision
     assert "category_results" in comparison
-    assert comparison["category_results"]["qgis_styling_and_layout_exports"]["total_count"] == 2
+    assert comparison["category_results"]["qgis_styling_and_layout_exports"]["total_count"] == 4
     improved_categories = [
         category
         for category in comparison["category_results"].values()
@@ -178,6 +188,18 @@ def test_train_geominilm_validation_experiment_writes_honest_baseline_reports(tm
     assert len(improved_categories) >= 3
     assert "oracle/sanity" not in comparison["baseline_notes"]["honest_baseline"]
     assert "directional" in comparison["baseline_notes"]["reference_heldout"]
+    assert split_validation["passed"] is True
+    assert split_validation["issues"] == []
+    assert manifest_check["passed"] is True
+    assert calibration["method"] == "workflow_score_as_confidence_proxy"
+    assert "expected_calibration_error" in calibration
+    assert "reliability_bins" in calibration
+    assert production_decision["dashboard_integration_allowed"] == (
+        comparison["trained_validation_score"] > comparison["honest_baseline_score"]
+        and comparison["trained_validation_score"] >= production_decision["required_metric_value"]
+        and comparison["validation_record_count"] >= comparison["minimum_validation_records"]
+    )
     assert (predictions_dir / "honest_baseline_predictions.jsonl").exists()
+    assert (eval_dir / "evaluation_manifest.json").exists()
     assert (eval_dir / "experiment_comparison.md").exists()
     assert "GeoMiniLM validation experiment complete" in result.stdout

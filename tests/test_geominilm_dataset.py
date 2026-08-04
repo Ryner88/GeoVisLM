@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 
@@ -13,12 +14,18 @@ from geovis_lm.model.dataset import (
     summarize_examples,
     write_preprocessed_jsonl,
 )
+from geovis_lm.model.evaluation_design import (
+    SplitSpec,
+    validate_evaluation_splits,
+    validate_manifest_file,
+)
 
 
 STARTER_DATASET = Path("data/geominilm/starter_workflows.jsonl")
 TRAINING_EXPANSION = Path("data/geominilm/training_expansion_workflows.jsonl")
 VALIDATION_DATASET = Path("data/geominilm/validation_workflows.jsonl")
 FAILURE_TAXONOMY = Path("data/geominilm/failure_taxonomy.json")
+EVALUATION_MANIFEST = Path("data/geominilm/evaluation_manifest.json")
 
 
 def test_load_geominilm_dataset_validates_starter_records():
@@ -75,7 +82,7 @@ def test_validation_and_training_expansion_are_disjoint_and_valid():
     validation_ids = {example.id for example in validation}
 
     assert len(expansion) == 8
-    assert len(validation) == 6
+    assert len(validation) == 14
     assert training_ids.isdisjoint(validation_ids)
     assert {example.domain for example in validation} == {"gis", "qgis", "paraview", "reporting"}
 
@@ -94,6 +101,68 @@ def test_failure_taxonomy_covers_validation_and_expansion_ids():
     assert expansion_ids == categorized_expansion_ids
     assert validation_ids == categorized_validation_ids
     assert taxonomy["baseline_reference"]["heldout_score"] == 0.4943
+
+
+def test_frozen_production_manifest_matches_current_splits():
+    check = validate_manifest_file(EVALUATION_MANIFEST)
+
+    assert check["passed"] is True
+    assert check["mismatches"] == []
+
+
+def test_production_split_validation_rejects_duplicate_and_leakage_records(tmp_path):
+    starter_records = [json.loads(line) for line in STARTER_DATASET.read_text(encoding="utf-8").splitlines()]
+    validation_records = [dict(starter_records[0], id="validation-leaked-copy")]
+    leaked_validation = write_jsonl(tmp_path / "leaked_validation.jsonl", validation_records)
+
+    result = validate_evaluation_splits(
+        [
+            SplitSpec("starter", "training", STARTER_DATASET),
+            SplitSpec("leaked_validation", "validation", leaked_validation),
+        ],
+        taxonomy_path=FAILURE_TAXONOMY,
+    )
+
+    assert result.passed is False
+    assert any(issue.kind == "exact_duplicate" for issue in result.issues)
+
+
+def test_production_split_validation_rejects_near_duplicate_leakage_records(tmp_path):
+    starter_records = [json.loads(line) for line in STARTER_DATASET.read_text(encoding="utf-8").splitlines()]
+    near_duplicate = copy.deepcopy(starter_records[0])
+    near_duplicate["id"] = "validation-near-leaked-copy"
+    near_duplicate["instruction"] = f"{near_duplicate['instruction']} Please keep the same workflow structure."
+    near_duplicate["inputs"] = {"review_label": "near duplicate leakage check"}
+    leaked_validation = write_jsonl(tmp_path / "near_leaked_validation.jsonl", [near_duplicate])
+
+    result = validate_evaluation_splits(
+        [
+            SplitSpec("starter", "training", STARTER_DATASET),
+            SplitSpec("near_leaked_validation", "validation", leaked_validation),
+        ],
+        taxonomy_path=FAILURE_TAXONOMY,
+    )
+
+    assert result.passed is False
+    assert not any(issue.kind == "exact_duplicate" for issue in result.issues)
+    assert any(issue.kind == "near_duplicate_or_leakage" for issue in result.issues)
+
+
+def test_frozen_production_splits_pass_duplicate_and_leakage_checks():
+    result = validate_evaluation_splits(
+        [
+            SplitSpec("starter", "training", STARTER_DATASET),
+            SplitSpec("extra_training_1", "training", TRAINING_EXPANSION),
+            SplitSpec("expanded_validation", "validation", VALIDATION_DATASET),
+        ],
+        taxonomy_path=FAILURE_TAXONOMY,
+    )
+
+    assert result.passed is True
+    assert result.issues == []
+    assert result.split_manifest["primary_metric"] == "trained_validation_score"
+    assert result.split_manifest["pass_threshold"] == 0.75
+    assert result.split_manifest["minimum_validation_records"] == 12
 
 
 def write_jsonl(path: Path, records: list[dict]) -> Path:

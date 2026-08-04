@@ -24,6 +24,16 @@ from geovis_lm.model.dataset import (  # noqa: E402
     write_jsonl_records,
     write_preprocessed_jsonl,
 )
+from geovis_lm.model.evaluation_design import (  # noqa: E402
+    DEFAULT_MINIMUM_THRESHOLD_MARGIN,
+    DEFAULT_MINIMUM_VALIDATION_RECORDS,
+    DEFAULT_PRIMARY_METRIC,
+    DEFAULT_PRODUCTION_PASS_THRESHOLD,
+    SplitSpec,
+    build_evaluation_manifest,
+    validate_evaluation_splits,
+    validate_manifest_file,
+)
 from geovis_lm.model.prototype import (  # noqa: E402
     GeoMiniLMPrototype,
     compare_reports,
@@ -96,6 +106,35 @@ def parse_args() -> argparse.Namespace:
         "--held-out-eval",
         action="store_true",
         help="Run leave-one-out evaluation, excluding each evaluated record from its fold checkpoint.",
+    )
+    parser.add_argument(
+        "--evaluation-manifest",
+        type=Path,
+        default=Path("data/geominilm/evaluation_manifest.json"),
+        help="Frozen production evaluation manifest. Validation runs verify this file when it exists.",
+    )
+    parser.add_argument(
+        "--primary-metric",
+        default=DEFAULT_PRIMARY_METRIC,
+        help="Locked primary metric name for production validation runs.",
+    )
+    parser.add_argument(
+        "--production-pass-threshold",
+        type=float,
+        default=DEFAULT_PRODUCTION_PASS_THRESHOLD,
+        help="Locked pass threshold for the production validation gate.",
+    )
+    parser.add_argument(
+        "--minimum-validation-records",
+        type=int,
+        default=DEFAULT_MINIMUM_VALIDATION_RECORDS,
+        help="Minimum frozen validation examples required before dashboard integration can be authorized.",
+    )
+    parser.add_argument(
+        "--minimum-threshold-margin",
+        type=float,
+        default=DEFAULT_MINIMUM_THRESHOLD_MARGIN,
+        help="Minimum margin above the pass threshold required before dashboard integration can be authorized.",
     )
     return parser.parse_args()
 
@@ -293,6 +332,21 @@ def run_validation_set_experiment(args: argparse.Namespace) -> dict[str, object]
     validation_examples = load_geominilm_dataset(args.validation_set)
     pairs = preprocess_examples(training_examples)
     summary = summarize_examples(training_examples)
+    split_specs = _production_split_specs(args)
+    split_validation = validate_evaluation_splits(split_specs, taxonomy_path=args.failure_taxonomy)
+    if not split_validation.passed:
+        raise EvaluationInputError(
+            [
+                "production evaluation split validation failed",
+                *[
+                    (
+                        f"{issue.kind}: {issue.left_split}/{issue.left_id} "
+                        f"matches {issue.right_split}/{issue.right_id} at {issue.similarity:.4f}"
+                    )
+                    for issue in split_validation.issues
+                ],
+            ]
+        )
 
     preprocessed_path = write_preprocessed_jsonl(pairs, args.output_dir / "training_pairs.jsonl")
     result = run_validation_experiment(
@@ -300,6 +354,10 @@ def run_validation_set_experiment(args: argparse.Namespace) -> dict[str, object]
         validation_examples,
         args.output_dir / "validation_checkpoint.json",
         model_name=args.model_name,
+        primary_metric=args.primary_metric,
+        pass_threshold=args.production_pass_threshold,
+        minimum_validation_records=args.minimum_validation_records,
+        minimum_threshold_margin=args.minimum_threshold_margin,
     )
     result.comparison["category_results"] = build_category_results(args.failure_taxonomy, result.comparison)
     predictions_path = write_jsonl_records(result.predictions, args.predictions_dir / "validation_predictions.jsonl")
@@ -309,6 +367,17 @@ def run_validation_set_experiment(args: argparse.Namespace) -> dict[str, object]
     )
 
     eval_dir = _eval_dir(args, dry_run=False, validation=True)
+    manifest_path = write_evaluation_manifest(args, split_specs, eval_dir)
+    manifest_check_path = write_manifest_check(args, eval_dir)
+    split_validation_path = write_split_validation(split_validation.to_dict(), eval_dir / "split_validation.json")
+    calibration_path = write_auxiliary_json(
+        result.comparison["confidence_calibration"],
+        eval_dir / "confidence_calibration.json",
+    )
+    production_decision_path = write_auxiliary_json(
+        result.comparison["production_decision"],
+        eval_dir / "production_decision.json",
+    )
     evaluation_json_path = write_json_report(result.trained_report, eval_dir / "evaluation_report.json")
     evaluation_markdown_path = write_markdown_report(result.trained_report, eval_dir / "evaluation_report.md")
     honest_baseline_json_path = write_json_report(
@@ -353,6 +422,11 @@ def run_validation_set_experiment(args: argparse.Namespace) -> dict[str, object]
         "honest_baseline_json_path": honest_baseline_json_path,
         "oracle_sanity_json_path": oracle_sanity_json_path,
         "experiment_comparison_path": experiment_comparison_path,
+        "manifest_path": manifest_path,
+        "manifest_check_path": manifest_check_path,
+        "split_validation_path": split_validation_path,
+        "calibration_path": calibration_path,
+        "production_decision_path": production_decision_path,
     }
 
 
@@ -429,6 +503,16 @@ def write_experiment_comparison(comparison: dict[str, object], json_path: Path, 
         f"- Reference held-out score: {comparison['reference_heldout_score']:.4f}",
         f"- Delta vs honest baseline: {comparison['delta_vs_honest_baseline']:.4f}",
         f"- Delta vs reference held-out: {comparison['delta_vs_reference_heldout']:.4f}",
+        f"- Primary metric: {comparison['primary_metric']}",
+        f"- Pass threshold: {comparison['pass_threshold']:.4f}",
+        (
+            f"- Dashboard integration: "
+            f"{'allowed' if comparison['production_decision']['dashboard_integration_allowed'] else 'blocked'}"
+        ),
+        (
+            f"- Expected calibration error: "
+            f"{comparison['confidence_calibration']['expected_calibration_error']:.4f}"
+        ),
         "",
         "The oracle sanity score uses expected validation outputs and is not a generalization benchmark.",
         comparison["baseline_notes"]["reference_heldout"],
@@ -456,6 +540,51 @@ def write_experiment_comparison(comparison: dict[str, object], json_path: Path, 
             )
     markdown_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return json_path
+
+
+def _production_split_specs(args: argparse.Namespace) -> list[SplitSpec]:
+    return [
+        SplitSpec("starter", "training", args.dataset),
+        *[SplitSpec(f"extra_training_{index}", "training", path) for index, path in enumerate(args.extra_training_data, start=1)],
+        SplitSpec("expanded_validation", "validation", args.validation_set),
+    ]
+
+
+def write_evaluation_manifest(args: argparse.Namespace, split_specs: list[SplitSpec], eval_dir: Path) -> Path:
+    if args.evaluation_manifest.exists():
+        manifest = json.loads(args.evaluation_manifest.read_text(encoding="utf-8"))
+    else:
+        manifest = build_evaluation_manifest(
+            split_specs,
+            taxonomy_path=args.failure_taxonomy,
+            primary_metric=args.primary_metric,
+            pass_threshold=args.production_pass_threshold,
+            minimum_validation_records=args.minimum_validation_records,
+            minimum_threshold_margin=args.minimum_threshold_margin,
+        )
+    return write_auxiliary_json(manifest, eval_dir / "evaluation_manifest.json")
+
+
+def write_manifest_check(args: argparse.Namespace, eval_dir: Path) -> Path:
+    if args.evaluation_manifest.exists():
+        check = validate_manifest_file(args.evaluation_manifest)
+    else:
+        check = {
+            "passed": False,
+            "mismatches": ["evaluation_manifest_missing"],
+            "expected": None,
+        }
+    return write_auxiliary_json(check, eval_dir / "manifest_check.json")
+
+
+def write_split_validation(payload: dict[str, object], path: Path) -> Path:
+    return write_auxiliary_json(payload, path)
+
+
+def write_auxiliary_json(payload: dict[str, object], path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
 
 
 def write_metadata(

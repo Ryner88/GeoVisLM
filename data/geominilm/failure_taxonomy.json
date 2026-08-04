@@ -24,7 +24,8 @@
         "train-gis-hillshade-custom-013"
       ],
       "validation_ids": [
-        "validation-gis-hillshade-only-001"
+        "validation-gis-hillshade-only-001",
+        "validation-gis-reproject-cog-007"
       ]
     },
     "gis_risk_overlay_and_reclassification": {
@@ -46,7 +47,8 @@
         "train-dataset-validation-020"
       ],
       "validation_ids": [
-        "validation-gis-wildfire-vector-002"
+        "validation-gis-wildfire-vector-002",
+        "validation-gis-flood-zonal-summary-008"
       ]
     },
     "qgis_styling_and_layout_exports": {
@@ -71,7 +73,9 @@
       ],
       "validation_ids": [
         "validation-qgis-layer-transparency-003",
-        "validation-qgis-layout-pdf-004"
+        "validation-qgis-layout-pdf-004",
+        "validation-qgis-atlas-export-009",
+        "validation-qgis-vector-labels-010"
       ]
     },
     "paraview_render_variants": {
@@ -92,7 +96,9 @@
         "train-paraview-contour-overlay-018"
       ],
       "validation_ids": [
-        "validation-paraview-contour-render-005"
+        "validation-paraview-contour-render-005",
+        "validation-paraview-slope-colorbar-011",
+        "validation-paraview-clip-cross-section-012"
       ]
     },
     "reporting_summaries": {
@@ -110,7 +116,9 @@
         "train-report-combined-risk-019"
       ],
       "validation_ids": [
-        "validation-report-risk-summary-006"
+        "validation-report-risk-summary-006",
+        "validation-report-qgis-export-review-013",
+        "validation-report-eval-manifest-014"
       ]
     }
   }

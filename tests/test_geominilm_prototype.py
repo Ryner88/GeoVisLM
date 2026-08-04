@@ -83,7 +83,9 @@ def test_validation_experiment_uses_disjoint_frozen_validation_set(tmp_path):
     assert result.comparison["reference_heldout_score"] == 0.4943
     assert result.comparison["trained_validation_score"] >= result.comparison["honest_baseline_score"]
     assert result.comparison["delta_vs_reference_heldout"] > 0.0
-    assert result.comparison["failure_count"] <= 3
+    assert result.comparison["validation_record_count"] == 14
+    assert result.comparison["failure_count"] == 11
+    assert result.comparison["production_decision"]["dashboard_integration_allowed"] is False
     assert all(prediction["id"] != prediction["source_checkpoint_record_id"] for prediction in result.predictions)
 
 
