@@ -116,6 +116,7 @@ def test_train_geominilm_held_out_eval_writes_excluded_fold_reports(tmp_path):
     assert result.returncode == 0, result.stderr
     metadata = json.loads((output_dir / "heldout_metadata.json").read_text(encoding="utf-8"))
     comparison = json.loads((eval_dir / "baseline_comparison.json").read_text(encoding="utf-8"))
+    calibration = json.loads((eval_dir / "confidence_calibration.json").read_text(encoding="utf-8"))
     predictions = [
         json.loads(line)
         for line in (predictions_dir / "heldout_predictions.jsonl").read_text(encoding="utf-8").splitlines()
@@ -124,6 +125,9 @@ def test_train_geominilm_held_out_eval_writes_excluded_fold_reports(tmp_path):
     assert metadata["training_status"] == "held_out_complete"
     assert metadata["training"]["fold_count"] == 12
     assert comparison["heldout_summary_score"] < comparison["baseline_summary_score"]
+    assert comparison["confidence_calibration"] == calibration
+    assert calibration["method"] == "workflow_score_as_confidence_proxy"
+    assert "expected_calibration_error" in calibration
     assert comparison["failed_examples"]
     assert (eval_dir / "evaluation_report.md").exists()
     for prediction in predictions:

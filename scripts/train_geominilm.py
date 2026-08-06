@@ -280,6 +280,10 @@ def run_held_out_evaluation(args: argparse.Namespace) -> dict[str, object]:
     eval_dir = _eval_dir(args, dry_run=False, held_out=True)
     evaluation_json_path = write_json_report(heldout_result.heldout_report, eval_dir / "evaluation_report.json")
     evaluation_markdown_path = write_markdown_report(heldout_result.heldout_report, eval_dir / "evaluation_report.md")
+    calibration_path = write_auxiliary_json(
+        heldout_result.comparison["confidence_calibration"],
+        eval_dir / "confidence_calibration.json",
+    )
     comparison_json_path, comparison_markdown_path = write_comparison_report(
         heldout_result.comparison,
         eval_dir / "baseline_comparison.json",
@@ -322,6 +326,7 @@ def run_held_out_evaluation(args: argparse.Namespace) -> dict[str, object]:
         "predictions_path": predictions_path,
         "evaluation_json_path": evaluation_json_path,
         "evaluation_markdown_path": evaluation_markdown_path,
+        "calibration_path": calibration_path,
         "comparison_json_path": comparison_json_path,
         "comparison_markdown_path": comparison_markdown_path,
     }

@@ -206,6 +206,7 @@ def run_leave_one_out_evaluation(
         for record in heldout_report.records
         if not record.passed or record.findings
     ]
+    comparison["confidence_calibration"] = build_calibration_report(heldout_report)
     return HeldOutEvaluationResult(
         predictions=predictions,
         heldout_report=heldout_report,
@@ -475,6 +476,21 @@ def _predict_from_workflow_templates(example: GeoMiniLMExample) -> dict[str, Any
 
 def _gis_workflow(example: GeoMiniLMExample, text: str) -> list[dict[str, Any]] | None:
     output_path = _output_hint(example, default="requested output")
+    output_dir = _first_input(example, "output_dir", default="outputs/maps")
+    if _has_any(text, "dem") and _has_any(text, "slope") and _has_any(text, "hillshade") and _has_any(text, "terrain risk"):
+        return [
+            _step(1, "Load the DEM raster and preserve its profile, transform, and CRS.", "rasterio", "DEM array plus raster metadata."),
+            _step(2, "Calculate slope in degrees from the DEM grid spacing.", "geovis_lm.gis.terrain.calculate_slope_degrees", f"{output_dir}/slope_degrees.tif"),
+            _step(3, "Calculate a hillshade using default azimuth and altitude settings.", "geovis_lm.gis.terrain.calculate_hillshade", f"{output_dir}/hillshade.tif"),
+            _step(4, "Classify slope into low, medium, and high terrain risk classes.", "geovis_lm.gis.terrain.classify_slope_risk", f"{output_dir}/terrain_risk.tif"),
+        ]
+    if _has_any(text, "slope raster", "slope") and _has_any(text, "only", "downstream inspection"):
+        return [
+            _step(1, "Open the DEM with rasterio and read the first band as a masked array.", "rasterio", "Masked DEM array."),
+            _step(2, "Use the raster transform to compute x and y cell resolution.", "affine transform metadata", "Grid spacing values."),
+            _step(3, "Calculate slope in degrees and mask invalid cells.", "numpy gradient operations", "Slope array."),
+            _step(4, "Write the slope raster with LZW compression and DEM metadata.", "rasterio", output_path),
+        ]
     if _has_any(text, "hillshade", "shade"):
         return [
             _step(1, "Load the DEM raster and preserve its profile, transform, and CRS.", "rasterio", "DEM array and raster metadata."),
@@ -491,6 +507,13 @@ def _gis_workflow(example: GeoMiniLMExample, text: str) -> list[dict[str, Any]] 
             _step(5, "Validate the output CRS, transform, tiling, and requested path.", "raster metadata validation", "Validated COG raster."),
         ]
     if _has_any(text, "flood", "wildfire", "exposure", "zonal", "summary", "overlay"):
+        if "wildfire" in text and _has_any(text, "fuel", "screening", "dem"):
+            return [
+                _step(1, "Load the DEM and fuel layer with CRS metadata.", "geovis_lm.gis.risk.execute_wildfire_risk_workflow", "DEM and fuel inputs."),
+                _step(2, "Calculate slope-driven wildfire risk and normalize fuel classes.", "geovis_lm.gis.risk.slope_wildfire_risk and geovis_lm.gis.risk.vector_fuel_risk", "Slope and fuel risk factors."),
+                _step(3, "Combine weighted wildfire layers into low, moderate, and high classes.", "geovis_lm.gis.risk.combine_risk_layers", "Categorical wildfire risk raster."),
+                _step(4, "Write wildfire risk raster and JSON summary outputs.", "rasterio and JSON summary writer", f"{output_dir}/wildfire_risk.tif and {output_dir}/wildfire_risk_summary.json"),
+            ]
         if "wildfire" in text:
             return [
                 _step(1, "Load wildfire hazard zones and project features as vector layers.", "geopandas", "Two GeoDataFrames with CRS metadata."),
@@ -512,11 +535,27 @@ def _gis_workflow(example: GeoMiniLMExample, text: str) -> list[dict[str, Any]] 
             _step(4, "Write the exposure layer as GeoJSON.", "GeoPandas file writer", output_path),
         ]
     if _has_any(text, "slope") and _has_any(text, "risk", "threshold", "reclass"):
+        if _has_any(text, "project mvp", "class_values"):
+            return [
+                _step(1, "Read the slope raster as a masked numeric array.", "rasterio", "Slope degrees array."),
+                _step(2, "Assign class 1 to cells from 0 up to 10 degrees.", "numpy boolean masks", "Low risk cells."),
+                _step(3, "Assign class 2 to cells from 10 up to 25 degrees.", "numpy boolean masks", "Medium risk cells."),
+                _step(4, "Assign class 3 to cells at or above 25 degrees.", "numpy boolean masks", "High risk cells."),
+                _step(5, "Save the result as uint8 with nodata value 0.", "rasterio", output_path),
+            ]
         return [
             _step(1, "Read the slope raster as a masked numeric array.", "rasterio", "Slope degrees array with metadata."),
             _step(2, "Apply the requested low, medium, and high threshold masks.", "numpy boolean masks", "Classified risk array."),
             _step(3, "Set nodata cells to class value 0.", "numpy masked array operations", "Risk array with nodata class."),
             _step(4, "Write the classified raster as uint8 with source geospatial metadata.", "rasterio", output_path),
+        ]
+    if _has_any(text, "add a new", "training example", "project jsonl format"):
+        return [
+            _step(1, "Choose a stable unique id and a supported domain value.", "GeoMiniLM dataset schema", "Example metadata."),
+            _step(2, "Write a realistic instruction and concrete input values.", "JSON authoring", "Instruction and inputs fields."),
+            _step(3, "Describe ordered workflow steps with action, tool, and output keys.", "JSON authoring", "expected_workflow array."),
+            _step(4, "Add an explanation that captures reasoning and caveats.", "JSON authoring", "Complete JSONL record."),
+            _step(5, "Validate that the new line is valid JSON and includes all required fields.", "Python json module", "Valid starter dataset."),
         ]
     if _has_any(text, "dataset", "jsonl", "schema", "duplicate"):
         return [
@@ -530,6 +569,13 @@ def _gis_workflow(example: GeoMiniLMExample, text: str) -> list[dict[str, Any]] 
 
 def _qgis_workflow(example: GeoMiniLMExample, text: str) -> list[dict[str, Any]] | None:
     export_path = _output_hint(example, default="requested export path")
+    if _has_any(text, "move from qgis", "paraview", "3d terrain render"):
+        return [
+            _step(1, "Use QGIS to validate raster alignment, styling, and terrain risk classes.", "QGIS", "Confirmed 2D analytical map."),
+            _step(2, "Use the original DEM as the ParaView input rather than the classified risk raster.", "GeoTIFF DEM", "Elevation data suitable for 3D warp."),
+            _step(3, "Run the ParaView terrain script with pvpython.", "pvpython", "3D terrain screenshot and state file."),
+            _step(4, "Compare the QGIS risk map and ParaView render for portfolio presentation.", "GeoVisLM workflow review", "Paired 2D and 3D terrain visuals."),
+        ]
     if _has_any(text, "atlas"):
         return [
             _step(1, "Confirm the map layers and coverage layer are loaded and styled in QGIS.", "QGIS map canvas", "Atlas-ready project view."),
@@ -551,6 +597,20 @@ def _qgis_workflow(example: GeoMiniLMExample, text: str) -> list[dict[str, Any]]
             _step(3, "Add title, legend, scale bar, north arrow, and requested layout elements.", "QGIS layout item tools", "Map surrounds on the layout with title legend scale bar north arrow."),
             _step(4, "Export the layout to the requested path.", "QGIS layout export", f"{export_path} PDF PNG map layout export."),
         ]
+    if _has_any(text, "terrain risk raster", "risk colors", "low, medium, and high"):
+        return [
+            _step(1, "Open layer properties for terrain_risk.tif.", "QGIS Layer Properties", "Symbology panel."),
+            _step(2, "Set renderer to paletted or unique values.", "QGIS Symbology", "Class table for raster values."),
+            _step(3, "Assign green to value 1, yellow to value 2, and red to value 3.", "QGIS color controls", "Readable risk legend."),
+            _step(4, "Hide or make value 0 transparent if present.", "QGIS transparency settings", "Nodata cells do not distract from mapped terrain."),
+        ]
+    if _has_any(text, "readable layer order", "recommended_order"):
+        return [
+            _step(1, "Create a new QGIS project and add the hillshade, slope, and risk rasters.", "QGIS Browser or Layer menu", "Three raster layers in the layer panel."),
+            _step(2, "Place hillshade below analytical overlays.", "QGIS Layers panel", "Hillshade used as terrain context."),
+            _step(3, "Place slope above hillshade with partial transparency.", "QGIS raster styling", "Slope pattern visible over shaded relief."),
+            _step(4, "Place terrain risk at the top with categorical colors.", "QGIS paletted renderer", "Risk classes visible for interpretation."),
+        ]
     if _has_any(text, "opacity", "transparent", "transparency", "overlay", "layer"):
         return [
             _step(1, "Add the base and overlay layers to the QGIS project.", "QGIS Browser or Layer menu", "Layers in the layer panel."),
@@ -565,6 +625,28 @@ def _paraview_workflow(example: GeoMiniLMExample, text: str) -> list[dict[str, A
     prefix = _first_input(example, "output_prefix", default="terrain_render")
     image_output = _first_input(example, "screenshot_path", "output_path", default=f"outputs/renders/{prefix}.png")
     state_output = _first_input(example, "state_path", default=f"outputs/renders/{prefix}.pvsm")
+    if _has_any(text, "gui", "refining", "state file", "change color preset"):
+        return [
+            _step(1, "Open the saved ParaView state file in the GUI.", "ParaView File Open", "Restored render pipeline."),
+            _step(2, "Inspect the raster source, Warp By Scalar filter, and active color map.", "ParaView Pipeline Browser", "Editable visualization pipeline."),
+            _step(3, "Adjust camera position and color settings for the target view.", "ParaView RenderView controls", "Refined terrain composition."),
+            _step(4, "Save a new screenshot under outputs/renders.", "ParaView Save Screenshot", "Updated terrain render image."),
+        ]
+    if _has_any(text, "vertical exaggeration", "elevation_scale", "stronger vertical"):
+        return [
+            _step(1, "Run the ParaView terrain script with --elevation-scale 2.5.", "pvpython", "Configured render pipeline."),
+            _step(2, "Warp the DEM by its scalar elevation values using the requested scale factor.", "Warp By Scalar", "Vertically exaggerated terrain mesh."),
+            _step(3, "Render the terrain with the default terrain color map.", "ParaView RenderView", "Exaggerated terrain preview."),
+            _step(4, "Save outputs using the terrain_exaggerated prefix.", "ParaView screenshot and state writers", f"{image_output} and {state_output}"),
+        ]
+    if _has_any(text, "save a screenshot", "script_path", "interpreter"):
+        return [
+            _step(1, "Run the ParaView terrain script with pvpython, passing the DEM path.", "pvpython", "ParaView pipeline execution."),
+            _step(2, "Open the DEM as raster data and identify the first scalar band.", "paraview.simple.OpenDataFile", "Raster source with scalar elevation data."),
+            _step(3, "Apply Warp By Scalar using the elevation band.", "paraview.simple.WarpByScalar", "3D terrain surface."),
+            _step(4, "Apply a terrain color preset and reset the camera.", "ParaView RenderView", "Readable terrain scene."),
+            _step(5, "Save a screenshot and ParaView state file.", "paraview.simple.SaveScreenshot and SaveState", f"{image_output} and {state_output}"),
+        ]
     workflow = [
         _step(1, "Run the ParaView terrain workflow and open the DEM raster.", "pvpython and paraview.simple.OpenDataFile", "DEM source with scalar elevation data."),
         _step(2, "Apply Warp By Scalar to create terrain relief.", "paraview.simple.WarpByScalar and Warp By Scalar", "Warped terrain surface."),

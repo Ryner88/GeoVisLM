@@ -66,6 +66,8 @@ def test_leave_one_out_evaluation_excludes_heldout_examples_from_training(tmp_pa
     assert result.comparison["heldout_summary_score"] == round(result.heldout_report.summary_score, 4)
     assert result.comparison["baseline_summary_score"] == 1.0
     assert result.comparison["summary_delta"] < 0.0
+    assert result.comparison["confidence_calibration"]["record_count"] == len(examples)
+    assert "expected_calibration_error" in result.comparison["confidence_calibration"]
     assert result.comparison["failed_examples"]
     for fold in result.folds:
         assert fold.record_id not in fold.training_record_ids
