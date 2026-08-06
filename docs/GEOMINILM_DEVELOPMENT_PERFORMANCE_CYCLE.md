@@ -69,3 +69,18 @@ timeout 120 .venv/bin/python -m py_compile geovis_lm/model/prototype.py scripts/
 ```
 
 Result: passed
+
+Full regression suite:
+
+```bash
+timeout 120 .venv/bin/python -m pytest
+```
+
+Result: `77 passed in 14.97s`
+
+## Candidate Lock
+
+- Locked next candidate: `9af23d8`
+- Lock basis: training-derived development result plus passing full regression suite
+- Production status: not accepted; dashboard integration remains blocked
+- Future production use: requires a newly scheduled formal one-shot gate before any production acceptance decision
