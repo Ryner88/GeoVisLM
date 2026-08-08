@@ -123,10 +123,13 @@ The August 4 training-derived development run produced:
 - Development records: `29`
 - Baseline oracle sanity score: `1.0000`
 
-The next read of `data/geominilm/validation_workflows.jsonl` should be the
-formal August 6 production gate attempt, not another tuning loop.
+Candidate `9af23d8` was evaluated exactly once against
+`data/geominilm/validation_workflows.jsonl` during the `2026-08-08` formal
+production gate. That candidate failed. The next performance cycle must remain
+training/development-only, not another tuning loop against the frozen validation
+split.
 
-Current expanded-set status from the `2026-08-04` performance run:
+Current expanded-set status from the `2026-08-08` production gate:
 
 - Status: production evaluation framework implemented; expanded production
   acceptance gate not passed.
@@ -134,6 +137,7 @@ Current expanded-set status from the `2026-08-04` performance run:
 - Honest baseline score: `0.5326`
 - Delta vs honest baseline: `+0.1875`
 - Required metric for dashboard authorization: `0.76`
+- Remaining gap: `0.0399`
 - Failed validation examples: `9/14`
 - Expected calibration error: `0.4368`
 - Dashboard integration: blocked

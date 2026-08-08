@@ -4,7 +4,8 @@
 
 - Branch: `geominilm-development-performance-cycle`
 - Starting point: `c1a03ed`
-- Immutable production candidate: `428af8d`
+- Previous production candidate: `428af8d`
+- Failed production candidate: `9af23d8`
 - Frozen production validation split: off-limits for development selection
 - Dashboard integration: blocked until a future formal production gate passes
 
@@ -78,9 +79,11 @@ timeout 120 .venv/bin/python -m pytest
 
 Result: `77 passed in 14.97s`
 
-## Candidate Lock
+## Candidate Gate Outcome
 
-- Locked next candidate: `9af23d8`
+- Locked candidate evaluated: `9af23d8`
 - Lock basis: training-derived development result plus passing full regression suite
-- Production status: not accepted; dashboard integration remains blocked
-- Future production use: requires a newly scheduled formal one-shot gate before any production acceptance decision
+- Production status: `9af23d8` was not accepted; dashboard integration remains blocked
+- Future production use: requires a new training/development-only performance cycle
+  followed by a newly scheduled formal one-shot gate before any production
+  acceptance decision
