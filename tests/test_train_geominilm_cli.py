@@ -129,12 +129,17 @@ def test_train_geominilm_held_out_eval_writes_excluded_fold_reports(tmp_path):
     assert calibration["method"] == "prediction_confidence"
     assert "expected_calibration_error" in calibration
     assert comparison["prediction_strategy_counts"] == {"workflow_template": 12}
-    assert comparison["failed_examples"]
+    assert comparison["failure_count"] == 1
+    assert len(comparison["failed_examples"]) == 1
+    assert comparison["records_with_findings_count"] == 12
+    assert len(comparison["records_with_findings"]) == 12
     assert (eval_dir / "evaluation_report.md").exists()
     for prediction in predictions:
         assert prediction["id"] not in prediction["fold_training_record_ids"]
         assert prediction["source_checkpoint_record_id"] != prediction["id"]
     assert "GeoMiniLM held-out evaluation complete" in result.stdout
+    assert "Threshold failures: 1" in result.stdout
+    assert "Records with findings: 12" in result.stdout
 
 
 def test_train_geominilm_grouped_held_out_eval_writes_family_reports(tmp_path):
@@ -174,10 +179,18 @@ def test_train_geominilm_grouped_held_out_eval_writes_family_reports(tmp_path):
     assert metadata["training"]["candidate_components"] == ["tfidf_retrieval_checkpoint", "workflow_template_code"]
     assert comparison["workflow_family_count"] == 5
     assert comparison["prediction_strategy_counts"] == {"workflow_template": 29}
+    assert comparison["failure_count"] == 2
+    assert len(comparison["failed_examples"]) == 2
+    assert comparison["records_with_findings_count"] == 29
+    assert len(comparison["records_with_findings"]) == 29
+    assert len(metadata["evaluation"]["failed_examples"]) == 2
+    assert len(metadata["evaluation"]["records_with_findings"]) == 29
     for prediction in predictions:
         for grouped_id in prediction["heldout_group_record_ids"]:
             assert grouped_id not in prediction["fold_training_record_ids"]
     assert "GeoMiniLM grouped held-out evaluation complete" in result.stdout
+    assert "Threshold failures: 2" in result.stdout
+    assert "Records with findings: 29" in result.stdout
 
 
 def test_train_geominilm_validation_experiment_writes_honest_baseline_reports(tmp_path):
@@ -242,6 +255,9 @@ def test_train_geominilm_validation_experiment_writes_honest_baseline_reports(tm
     assert comparison["trained_validation_score"] == 0.6377
     assert comparison["honest_baseline_score"] == 0.3682
     assert comparison["failure_count"] == 11
+    assert comparison["records_with_findings_count"] == 14
+    assert len(comparison["failed_examples"]) == 11
+    assert len(comparison["records_with_findings"]) == 14
     assert calibration["method"] == "prediction_confidence"
     assert "expected_calibration_error" in calibration
     assert "reliability_bins" in calibration
@@ -263,3 +279,5 @@ def test_train_geominilm_validation_experiment_writes_honest_baseline_reports(tm
     assert (eval_dir / "evaluation_manifest.json").exists()
     assert (eval_dir / "experiment_comparison.md").exists()
     assert "GeoMiniLM validation experiment complete" in result.stdout
+    assert "Threshold failures: 11" in result.stdout
+    assert "Records with findings: 14" in result.stdout

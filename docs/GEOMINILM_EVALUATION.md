@@ -52,6 +52,15 @@ predictions are not rewarded for copying the expected record's original
 The report passes only when the summary score meets the threshold and every
 expected record has a passing prediction.
 
+Comparison artifacts separate threshold failures from diagnostic findings:
+
+- `failed_examples`: records whose score is below the configured threshold.
+- `failure_count`: count of threshold failures; this is the failure count used by
+  category summaries and gate logic.
+- `records_with_findings`: records with any evaluator finding, including partial
+  component matches on otherwise passing records.
+- `records_with_findings_count`: count of diagnostic finding records.
+
 ## Usage
 
 ```bash
@@ -171,6 +180,7 @@ request context no longer contributes to the primary score:
 - Workflow-only trained validation score: `0.6377`
 - Workflow-only honest baseline score: `0.3682`
 - Failed validation examples: `11/14`
+- Records with evaluator findings: `14/14`
 - Prediction source strategies: `workflow_template` for `14/14`
 
 Interpret this as a protocol-migration rescore, not a new production acceptance

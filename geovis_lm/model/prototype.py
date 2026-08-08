@@ -199,16 +199,7 @@ def run_leave_one_out_evaluation(
     baseline_report = evaluate_records(expected_records, _oracle_baseline_predictions(examples), score_context_fields=False)
     comparison = compare_reports(heldout_report, baseline_report, trained_label="heldout")
     comparison["fold_count"] = len(folds)
-    comparison["failed_examples"] = [
-        {
-            "id": record.record_id,
-            "score": round(record.score, 4),
-            "findings": record.findings,
-            "source_checkpoint_record_id": _prediction_source(predictions, record.record_id),
-        }
-        for record in heldout_report.records
-        if not record.passed or record.findings
-    ]
+    _attach_record_outcomes(comparison, heldout_report, predictions)
     comparison["confidence_calibration"] = build_calibration_report(heldout_report)
     comparison["prediction_strategy_counts"] = _prediction_strategy_counts(predictions)
     return HeldOutEvaluationResult(
@@ -267,16 +258,7 @@ def run_grouped_holdout_evaluation(
     comparison["fold_count"] = len(folds)
     comparison["workflow_family_count"] = len(groups)
     comparison["workflow_families"] = {family: [example.id for example in members] for family, members in sorted(groups.items())}
-    comparison["failed_examples"] = [
-        {
-            "id": record.record_id,
-            "score": round(record.score, 4),
-            "findings": record.findings,
-            "source_checkpoint_record_id": _prediction_source(predictions, record.record_id),
-        }
-        for record in heldout_report.records
-        if not record.passed or record.findings
-    ]
+    _attach_record_outcomes(comparison, heldout_report, predictions)
     comparison["confidence_calibration"] = build_calibration_report(heldout_report)
     comparison["prediction_strategy_counts"] = _prediction_strategy_counts(predictions)
     return HeldOutEvaluationResult(
@@ -391,7 +373,7 @@ def compare_validation_reports(
     baseline_records = {record.record_id: record for record in honest_baseline.records}
     record_deltas = []
     failed_examples = []
-    finding_examples = []
+    records_with_findings = []
     for record_id in sorted(trained_records):
         trained_record = trained_records[record_id]
         baseline_record = baseline_records[record_id]
@@ -406,7 +388,7 @@ def compare_validation_reports(
         if not trained_record.passed:
             failed_examples.append(item)
         if trained_record.findings:
-            finding_examples.append(item)
+            records_with_findings.append(item)
     return {
         "primary_metric": primary_metric,
         "pass_threshold": pass_threshold,
@@ -425,7 +407,8 @@ def compare_validation_reports(
         "record_deltas": record_deltas,
         "failed_examples": failed_examples,
         "failure_count": len(failed_examples),
-        "finding_examples": finding_examples,
+        "records_with_findings": records_with_findings,
+        "records_with_findings_count": len(records_with_findings),
         "baseline_notes": {
             "honest_baseline": "Domain-exemplar retrieval from training records only.",
             "oracle_sanity": "Uses expected validation outputs and is only a pipeline sanity check.",
@@ -509,6 +492,14 @@ def write_comparison_report(
                 f"- `{failure['id']}` score `{failure['score']:.3f}` from "
                 f"`{failure['source_checkpoint_record_id']}`: {findings}"
             )
+    if comparison.get("records_with_findings"):
+        lines.extend(["", "## Records With Findings", ""])
+        for record in comparison["records_with_findings"]:
+            findings = ", ".join(record["findings"]) or "none"
+            lines.append(
+                f"- `{record['id']}` score `{record['score']:.3f}` from "
+                f"`{record['source_checkpoint_record_id']}`: {findings}"
+            )
     markdown_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return json_path, markdown_path
 
@@ -533,6 +524,35 @@ def _prediction_source(predictions: list[dict[str, Any]], record_id: str) -> str
         if prediction["id"] == record_id:
             return prediction.get("source_checkpoint_record_id")
     return None
+
+
+def _attach_record_outcomes(
+    comparison: dict[str, Any],
+    report: EvaluationReport,
+    predictions: list[dict[str, Any]],
+) -> None:
+    comparison["failed_examples"] = [
+        _record_outcome_item(record, predictions)
+        for record in report.records
+        if not record.passed
+    ]
+    comparison["failure_count"] = len(comparison["failed_examples"])
+    comparison["records_with_findings"] = [
+        _record_outcome_item(record, predictions)
+        for record in report.records
+        if record.findings
+    ]
+    comparison["records_with_findings_count"] = len(comparison["records_with_findings"])
+
+
+def _record_outcome_item(record: Any, predictions: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "id": record.record_id,
+        "score": round(record.score, 4),
+        "passed": record.passed,
+        "findings": record.findings,
+        "source_checkpoint_record_id": _prediction_source(predictions, record.record_id),
+    }
 
 
 def _prediction_strategy_counts(predictions: list[dict[str, Any]]) -> dict[str, int]:

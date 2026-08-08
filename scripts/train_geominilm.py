@@ -183,6 +183,10 @@ def main() -> None:
         print(f"Baseline comparison: {artifacts['comparison_json_path']}")
     if "experiment_comparison_path" in artifacts:
         print(f"Experiment comparison: {artifacts['experiment_comparison_path']}")
+    if "failure_count" in artifacts:
+        print(f"Threshold failures: {artifacts['failure_count']}")
+    if "records_with_findings_count" in artifacts:
+        print(f"Records with findings: {artifacts['records_with_findings_count']}")
 
 
 def run_dry_run(args: argparse.Namespace) -> dict[str, object]:
@@ -325,6 +329,7 @@ def run_held_out_evaluation(args: argparse.Namespace) -> dict[str, object]:
             "baseline_summary_score": heldout_result.comparison["baseline_summary_score"],
             "summary_delta": heldout_result.comparison["summary_delta"],
             "failed_examples": heldout_result.comparison["failed_examples"],
+            "records_with_findings": heldout_result.comparison["records_with_findings"],
         },
     )
 
@@ -339,6 +344,8 @@ def run_held_out_evaluation(args: argparse.Namespace) -> dict[str, object]:
         "calibration_path": calibration_path,
         "comparison_json_path": comparison_json_path,
         "comparison_markdown_path": comparison_markdown_path,
+        "failure_count": heldout_result.comparison["failure_count"],
+        "records_with_findings_count": heldout_result.comparison["records_with_findings_count"],
     }
 
 
@@ -386,6 +393,7 @@ def run_grouped_held_out_evaluation(args: argparse.Namespace) -> dict[str, objec
             "baseline_summary_score": heldout_result.comparison["baseline_summary_score"],
             "summary_delta": heldout_result.comparison["summary_delta"],
             "failed_examples": heldout_result.comparison["failed_examples"],
+            "records_with_findings": heldout_result.comparison["records_with_findings"],
         },
     )
 
@@ -400,6 +408,8 @@ def run_grouped_held_out_evaluation(args: argparse.Namespace) -> dict[str, objec
         "calibration_path": calibration_path,
         "comparison_json_path": comparison_json_path,
         "comparison_markdown_path": comparison_markdown_path,
+        "failure_count": heldout_result.comparison["failure_count"],
+        "records_with_findings_count": heldout_result.comparison["records_with_findings_count"],
     }
 
 
@@ -514,6 +524,8 @@ def run_validation_set_experiment(args: argparse.Namespace) -> dict[str, object]
         "split_validation_path": split_validation_path,
         "calibration_path": calibration_path,
         "production_decision_path": production_decision_path,
+        "failure_count": result.comparison["failure_count"],
+        "records_with_findings_count": result.comparison["records_with_findings_count"],
     }
 
 
@@ -631,6 +643,11 @@ def write_experiment_comparison(comparison: dict[str, object], json_path: Path, 
         for failure in comparison["failed_examples"]:
             findings = ", ".join(failure["findings"]) or "none"
             lines.append(f"- `{failure['id']}` score `{failure['trained_score']:.4f}`: {findings}")
+    if comparison.get("records_with_findings"):
+        lines.extend(["", "## Records With Findings", ""])
+        for record in comparison["records_with_findings"]:
+            findings = ", ".join(record["findings"]) or "none"
+            lines.append(f"- `{record['id']}` score `{record['trained_score']:.4f}`: {findings}")
     if comparison.get("category_results"):
         lines.extend(["", "## Category Results", "", "| Category | Trained | Honest Baseline | Failed |", "| --- | ---: | ---: | ---: |"])
         for category_name, result in comparison["category_results"].items():
