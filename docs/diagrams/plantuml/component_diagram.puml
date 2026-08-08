@@ -7,25 +7,42 @@ skinparam shadowing false
 package "Ingress" {
   actor "Browser User" as User
   component "Cloudflare" as Cloudflare
-  component "Cloudflare Access" as Access
-  component "Caddy" as Caddy
+  component "Cloudflare Access\noptional perimeter" as Access
+  component "Caddy\nReverse Proxy" as Caddy
 }
 
 package "Docker Compose Stack" {
-  component "Dashboard API" as Dashboard
-  component "Worker Service" as Worker
-  database "PostGIS" as Database
-  folder "Persistent Storage" as Storage
+  component "Dashboard API + HTML UI\nFastAPI" as Dashboard
+  component "First-Party Auth\nlogin / signup / session cookie" as Auth
+  component "Projects + Memberships\ncomments + audit events" as Collaboration
+  component "Worker Service\npolls queued jobs" as Worker
+  database "PostGIS\nmetadata, runs, files, outputs" as Database
+  folder "Shared Output Storage\nprojects / runs / jobs / artifacts" as Storage
+  queue "File-Backed Job Queue\noutputs/jobs/*/job.json" as Jobs
 }
 
 User --> Cloudflare
 Cloudflare --> Access
 Access --> Caddy
 Caddy --> Dashboard
-Dashboard --> Worker
-Dashboard --> Database
-Worker --> Database
-Dashboard --> Storage
-Worker --> Storage
+
+Dashboard --> Auth
+Dashboard --> Collaboration
+Dashboard --> Database : optional structured metadata
+Dashboard --> Storage : persisted uploads, runs, reports
+Dashboard --> Jobs : create queued job record
+
+Worker --> Jobs : claim next queued job
+Worker --> Storage : read inputs / write artifacts
+Worker --> Database : optional status metadata
+
+Collaboration --> Storage : member, comment, audit JSON
+Collaboration --> Database : optional project metadata
+
+note right of Jobs
+The dashboard does not call the worker directly.
+The durable boundary is the persisted job record
+and shared storage.
+end note
 
 @enduml

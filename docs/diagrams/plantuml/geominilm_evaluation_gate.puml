@@ -1,0 +1,63 @@
+@startuml
+title GeoMiniLM Evaluation Gate Boundary
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+database "Training-Derived Data\nstarter + expansion" as Training
+database "Grouped Development Families\nheld out by workflow family" as Families
+component "Template Code\nhandwritten predicates + outputs" as Templates
+component "TF-IDF Retriever\ncheckpoint + vocabulary" as Retriever
+component "Versioned Candidate\nretriever + template code" as Candidate
+database "Frozen Regression Set\ncurrent 14-record set" as Regression
+database "Sealed Shadow Set\nfuture one-shot production set" as Shadow
+
+component "Workflow-Only Evaluator\nno copied instruction/input credit" as Evaluator
+component "Honest Baseline\ntraining-domain exemplar" as Baseline
+component "Manifest Validation\nchecksums + immutable split metadata" as Manifest
+component "Leakage Checks\nids + exact + near duplicate" as Leakage
+component "Semantic / Executability Checks\nrequired before future acceptance" as Semantic
+component "Per-Category Floors" as Categories
+component "Prediction Confidence\nretrieval similarity calibration" as Confidence
+component "Candidate Lock" as Lock
+
+component "Integrity, quality,\ncategory, and confidence gates" as Gate
+component "Dashboard Integration Eligible" as Eligible
+component "Blocked\nnew development-only cycle" as Blocked
+
+Training --> Families
+Templates --> Candidate
+Retriever --> Candidate
+Families --> Retriever
+Families --> Candidate : grouped development protocol
+Candidate --> Lock
+Lock --> Regression : regression benchmark
+Lock --> Shadow : future sealed one-shot gate
+Regression --> Evaluator
+Shadow --> Evaluator
+Candidate --> Evaluator
+Baseline --> Evaluator
+Manifest --> Gate
+Leakage --> Gate
+Semantic --> Gate
+Evaluator --> Gate
+Categories --> Gate
+Confidence --> Gate
+
+Gate --> Eligible : pass all checks
+Gate --> Blocked : fail any check
+
+note right of Gate
+Authorization must be computed after
+manifest, leakage, semantic/executability,
+per-category, all-record, and confidence
+checks are attached to the decision.
+end note
+
+note bottom of Regression
+The reviewed 14-record set is now a
+regression benchmark, not a clean source
+for iterative model selection.
+end note
+
+@enduml

@@ -1,38 +1,46 @@
 @startuml
 title GeoVisLM Terrain Pipeline Sequence
 
-actor User
-participant "CLI Runner" as CLI
+actor "Dashboard User" as User
+participant "Dashboard UI / API" as Dashboard
+participant "Auth + Project Access" as Auth
+database "Shared Storage" as Storage
+queue "File-Backed Job Queue" as Jobs
+participant "Worker Loop" as Worker
+participant "Analysis Adapter" as Adapter
 participant "GIS Terrain Module" as Terrain
-database "Raw Data" as Raw
-database "Processed Outputs" as Outputs
-participant "QGIS" as QGIS
-participant "Report Generator\nFuture" as Reports
+participant "Report Generator" as Reports
+database "Artifacts" as Artifacts
 
-User -> CLI: run terrain analysis with DEM path
-CLI -> Raw: read DEM GeoTIFF
-Raw --> CLI: DEM path
+User -> Dashboard: sign in / open project
+Dashboard -> Auth: verify session and membership
+Auth --> Dashboard: principal
 
-CLI -> Terrain: load_dem()
-Terrain --> CLI: DEM array, profile, transform, CRS
+User -> Dashboard: create run and upload DEM/vector inputs
+Dashboard -> Storage: persist project, run, inputs
+Dashboard -> Jobs: create queued job JSON
+Dashboard --> User: run queued
 
-CLI -> Terrain: calculate_slope_degrees()
-Terrain --> CLI: slope raster
+Worker -> Jobs: poll and claim queued job
+Jobs --> Worker: run_id + paths
+Worker -> Storage: read run metadata and inputs
+Worker -> Adapter: execute analysis for run
 
-CLI -> Terrain: calculate_hillshade()
-Terrain --> CLI: hillshade raster
+Adapter -> Terrain: load DEM
+Terrain --> Adapter: DEM array, profile, transform, CRS
+Adapter -> Terrain: calculate slope
+Terrain --> Adapter: slope raster
+Adapter -> Terrain: calculate hillshade
+Terrain --> Adapter: hillshade raster
+Adapter -> Terrain: classify terrain risk
+Terrain --> Adapter: terrain risk raster
 
-CLI -> Terrain: classify_slope_risk()
-Terrain --> CLI: risk raster
+Adapter -> Artifacts: write maps, vectors, renders, logs
+Adapter -> Reports: build Markdown summary
+Reports -> Artifacts: write report.md
 
-CLI -> Outputs: save slope_degrees.tif
-CLI -> Outputs: save hillshade.tif
-CLI -> Outputs: save terrain_risk.tif
-
-User -> QGIS: open generated GeoTIFFs
-QGIS -> Outputs: load map layers
-
-CLI -> Reports: generate summary report later
-Reports -> Outputs: save report
+Worker -> Storage: update run/job status and artifact registry
+Dashboard -> Storage: list outputs and report
+Dashboard --> User: completed run with downloadable artifacts
 
 @enduml

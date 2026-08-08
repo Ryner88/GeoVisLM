@@ -16,7 +16,6 @@ from geovis_lm.model.evaluation_design import (
     DEFAULT_PRIMARY_METRIC,
     DEFAULT_PRODUCTION_PASS_THRESHOLD,
     build_calibration_report,
-    build_production_decision,
 )
 
 
@@ -120,11 +119,13 @@ class GeoMiniLMPrototype:
             self.examples,
             key=lambda candidate: (_cosine_similarity(prompt_vector, candidate["vector"]), candidate["id"]),
         )
+        retrieval_similarity = _cosine_similarity(prompt_vector, nearest["vector"])
         if nearest["id"] != example.id:
             planned_prediction = _predict_from_workflow_templates(example)
             if planned_prediction is not None:
                 planned_prediction["source_checkpoint_record_id"] = nearest["id"]
                 planned_prediction["source_strategy"] = "workflow_template"
+                planned_prediction["confidence"] = round(retrieval_similarity, 4)
                 return planned_prediction
         target = json.loads(nearest["target"])
         return {
@@ -135,6 +136,8 @@ class GeoMiniLMPrototype:
             "predicted_workflow": target["expected_workflow"],
             "explanation": target["explanation"],
             "source_checkpoint_record_id": nearest["id"],
+            "source_strategy": "tfidf_nearest_neighbor",
+            "confidence": round(retrieval_similarity, 4),
         }
 
     def predict_many(self, examples: list[GeoMiniLMExample]) -> list[dict[str, Any]]:
@@ -192,8 +195,8 @@ def run_leave_one_out_evaluation(
         )
 
     expected_records = [example.to_record() for example in examples]
-    heldout_report = evaluate_records(expected_records, predictions)
-    baseline_report = evaluate_records(expected_records, _oracle_baseline_predictions(examples))
+    heldout_report = evaluate_records(expected_records, predictions, score_context_fields=False)
+    baseline_report = evaluate_records(expected_records, _oracle_baseline_predictions(examples), score_context_fields=False)
     comparison = compare_reports(heldout_report, baseline_report, trained_label="heldout")
     comparison["fold_count"] = len(folds)
     comparison["failed_examples"] = [
@@ -207,6 +210,75 @@ def run_leave_one_out_evaluation(
         if not record.passed or record.findings
     ]
     comparison["confidence_calibration"] = build_calibration_report(heldout_report)
+    comparison["prediction_strategy_counts"] = _prediction_strategy_counts(predictions)
+    return HeldOutEvaluationResult(
+        predictions=predictions,
+        heldout_report=heldout_report,
+        baseline_report=baseline_report,
+        comparison=comparison,
+        folds=folds,
+    )
+
+
+def run_grouped_holdout_evaluation(
+    examples: list[GeoMiniLMExample],
+    checkpoint_dir: Path,
+    *,
+    family_by_id: dict[str, str] | None = None,
+    model_name: str = "geominilm-token-retrieval-v1",
+) -> HeldOutEvaluationResult:
+    if len(examples) < 2:
+        raise ValueError("Grouped holdout evaluation requires at least two examples")
+
+    groups: dict[str, list[GeoMiniLMExample]] = {}
+    for example in examples:
+        family = (family_by_id or {}).get(example.id) or _default_workflow_family(example)
+        groups.setdefault(family, []).append(example)
+    if len(groups) < 2:
+        raise ValueError("Grouped holdout evaluation requires at least two workflow families")
+
+    predictions = []
+    folds = []
+    for family, heldout_examples in sorted(groups.items()):
+        heldout_ids = {example.id for example in heldout_examples}
+        training_examples = [example for example in examples if example.id not in heldout_ids]
+        checkpoint_path = checkpoint_dir / family / "checkpoint.json"
+        training_result = train_and_save_checkpoint(training_examples, checkpoint_path, model_name=model_name)
+        loaded_model = GeoMiniLMPrototype.load(training_result.checkpoint_path)
+        fold_predictions = loaded_model.predict_many(heldout_examples)
+        for prediction in fold_predictions:
+            prediction["heldout_group"] = family
+            prediction["heldout_group_record_ids"] = sorted(heldout_ids)
+            prediction["fold_training_record_ids"] = [example.id for example in training_examples]
+        predictions.extend(fold_predictions)
+        folds.append(
+            HeldOutFoldResult(
+                record_id=family,
+                checkpoint_path=training_result.checkpoint_path,
+                training_record_ids=[example.id for example in training_examples],
+                prediction={"heldout_group": family, "heldout_group_record_ids": sorted(heldout_ids)},
+            )
+        )
+
+    expected_records = [example.to_record() for example in examples]
+    heldout_report = evaluate_records(expected_records, predictions, score_context_fields=False)
+    baseline_report = evaluate_records(expected_records, _oracle_baseline_predictions(examples), score_context_fields=False)
+    comparison = compare_reports(heldout_report, baseline_report, trained_label="grouped_holdout")
+    comparison["fold_count"] = len(folds)
+    comparison["workflow_family_count"] = len(groups)
+    comparison["workflow_families"] = {family: [example.id for example in members] for family, members in sorted(groups.items())}
+    comparison["failed_examples"] = [
+        {
+            "id": record.record_id,
+            "score": round(record.score, 4),
+            "findings": record.findings,
+            "source_checkpoint_record_id": _prediction_source(predictions, record.record_id),
+        }
+        for record in heldout_report.records
+        if not record.passed or record.findings
+    ]
+    comparison["confidence_calibration"] = build_calibration_report(heldout_report)
+    comparison["prediction_strategy_counts"] = _prediction_strategy_counts(predictions)
     return HeldOutEvaluationResult(
         predictions=predictions,
         heldout_report=heldout_report,
@@ -233,14 +305,25 @@ def run_validation_experiment(
     model = GeoMiniLMPrototype.load(checkpoint_path)
     predictions = model.predict_many(validation_examples)
     expected_records = [example.to_record() for example in validation_examples]
-    trained_report = evaluate_records(expected_records, predictions, pass_threshold=pass_threshold)
+    trained_report = evaluate_records(
+        expected_records,
+        predictions,
+        pass_threshold=pass_threshold,
+        score_context_fields=False,
+    )
 
     honest_baseline_predictions = build_domain_exemplar_baseline_predictions(training_examples, validation_examples)
-    honest_baseline_report = evaluate_records(expected_records, honest_baseline_predictions, pass_threshold=pass_threshold)
+    honest_baseline_report = evaluate_records(
+        expected_records,
+        honest_baseline_predictions,
+        pass_threshold=pass_threshold,
+        score_context_fields=False,
+    )
     oracle_sanity_report = evaluate_records(
         expected_records,
         _oracle_baseline_predictions(validation_examples),
         pass_threshold=pass_threshold,
+        score_context_fields=False,
     )
     comparison = compare_validation_reports(
         trained_report,
@@ -253,7 +336,7 @@ def run_validation_experiment(
         minimum_threshold_margin=minimum_threshold_margin,
     )
     comparison["confidence_calibration"] = build_calibration_report(trained_report)
-    comparison["production_decision"] = build_production_decision(comparison)
+    comparison["prediction_strategy_counts"] = _prediction_strategy_counts(predictions)
     return ValidationExperimentResult(
         predictions=predictions,
         trained_report=trained_report,
@@ -287,6 +370,7 @@ def build_domain_exemplar_baseline_predictions(
                 "explanation": source.explanation,
                 "source_baseline_record_id": source.id,
                 "baseline_type": "domain_exemplar",
+                "confidence": 0.0,
             }
         )
     return predictions
@@ -438,6 +522,7 @@ def _oracle_baseline_predictions(examples: list[GeoMiniLMExample]) -> list[dict[
             "inputs": example.inputs,
             "predicted_workflow": example.expected_workflow,
             "explanation": example.explanation,
+            "confidence": 1.0,
         }
         for example in examples
     ]
@@ -448,6 +533,21 @@ def _prediction_source(predictions: list[dict[str, Any]], record_id: str) -> str
         if prediction["id"] == record_id:
             return prediction.get("source_checkpoint_record_id")
     return None
+
+
+def _prediction_strategy_counts(predictions: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for prediction in predictions:
+        strategy = str(prediction.get("source_strategy") or prediction.get("baseline_type") or "unknown")
+        counts[strategy] = counts.get(strategy, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _default_workflow_family(example: GeoMiniLMExample) -> str:
+    record_id = re.sub(r"^(train|validation)-", "", example.id)
+    record_id = re.sub(r"-\d+$", "", record_id)
+    record_id = re.sub(r"^(gis|qgis|paraview|report|workflow|dataset)-", "", record_id)
+    return f"{example.domain}:{record_id}"
 
 
 def _predict_from_workflow_templates(example: GeoMiniLMExample) -> dict[str, Any] | None:

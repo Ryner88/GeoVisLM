@@ -31,12 +31,14 @@ from geovis_lm.model.evaluation_design import (  # noqa: E402
     DEFAULT_PRODUCTION_PASS_THRESHOLD,
     SplitSpec,
     build_evaluation_manifest,
+    build_production_decision,
     validate_evaluation_splits,
     validate_manifest_file,
 )
 from geovis_lm.model.prototype import (  # noqa: E402
     GeoMiniLMPrototype,
     compare_reports,
+    run_grouped_holdout_evaluation,
     run_leave_one_out_evaluation,
     run_validation_experiment,
     train_and_save_checkpoint,
@@ -108,6 +110,11 @@ def parse_args() -> argparse.Namespace:
         help="Run leave-one-out evaluation, excluding each evaluated record from its fold checkpoint.",
     )
     parser.add_argument(
+        "--grouped-held-out-eval",
+        action="store_true",
+        help="Run grouped workflow-family holdout evaluation for development model selection.",
+    )
+    parser.add_argument(
         "--evaluation-manifest",
         type=Path,
         default=Path("data/geominilm/evaluation_manifest.json"),
@@ -145,6 +152,9 @@ def main() -> None:
         if args.validation_set is not None:
             artifacts = run_validation_set_experiment(args)
             mode = "GeoMiniLM validation experiment complete"
+        elif args.grouped_held_out_eval:
+            artifacts = run_grouped_held_out_evaluation(args)
+            mode = "GeoMiniLM grouped held-out evaluation complete"
         elif args.held_out_eval:
             artifacts = run_held_out_evaluation(args)
             mode = "GeoMiniLM held-out evaluation complete"
@@ -332,6 +342,67 @@ def run_held_out_evaluation(args: argparse.Namespace) -> dict[str, object]:
     }
 
 
+def run_grouped_held_out_evaluation(args: argparse.Namespace) -> dict[str, object]:
+    examples = _load_training_examples(args)
+    pairs = preprocess_examples(examples)
+    summary = summarize_examples(examples)
+
+    preprocessed_path = write_preprocessed_jsonl(pairs, args.output_dir / "training_pairs.jsonl")
+    heldout_result = run_grouped_holdout_evaluation(
+        examples,
+        args.output_dir / "grouped_heldout_folds",
+        family_by_id=workflow_family_map(args.failure_taxonomy),
+        model_name=args.model_name,
+    )
+    predictions_path = write_jsonl_records(heldout_result.predictions, args.predictions_dir / "grouped_heldout_predictions.jsonl")
+    eval_dir = _eval_dir(args, dry_run=False, grouped_held_out=True)
+    evaluation_json_path = write_json_report(heldout_result.heldout_report, eval_dir / "evaluation_report.json")
+    evaluation_markdown_path = write_markdown_report(heldout_result.heldout_report, eval_dir / "evaluation_report.md")
+    calibration_path = write_auxiliary_json(
+        heldout_result.comparison["confidence_calibration"],
+        eval_dir / "confidence_calibration.json",
+    )
+    comparison_json_path, comparison_markdown_path = write_comparison_report(
+        heldout_result.comparison,
+        eval_dir / "baseline_comparison.json",
+        eval_dir / "baseline_comparison.md",
+        trained_label="grouped_holdout",
+    )
+    metadata_path = write_metadata(
+        args.output_dir / "grouped_heldout_metadata.json",
+        dataset_path=args.dataset,
+        model_name=args.model_name,
+        summary=summary.to_dict(),
+        training_status="grouped_held_out_complete",
+        dry_run=False,
+        training={
+            "algorithm": "grouped_workflow_family_tfidf_nearest_neighbor",
+            "candidate_components": ["tfidf_retrieval_checkpoint", "workflow_template_code"],
+            "fold_count": len(heldout_result.folds),
+            "workflow_families": heldout_result.comparison["workflow_families"],
+        },
+        evaluation={
+            "grouped_holdout_summary_score": heldout_result.comparison["grouped_holdout_summary_score"],
+            "baseline_summary_score": heldout_result.comparison["baseline_summary_score"],
+            "summary_delta": heldout_result.comparison["summary_delta"],
+            "failed_examples": heldout_result.comparison["failed_examples"],
+        },
+    )
+
+    return {
+        "summary": summary.to_dict(),
+        "preprocessed_path": preprocessed_path,
+        "metadata_path": metadata_path,
+        "fold_checkpoint_dir": args.output_dir / "grouped_heldout_folds",
+        "predictions_path": predictions_path,
+        "evaluation_json_path": evaluation_json_path,
+        "evaluation_markdown_path": evaluation_markdown_path,
+        "calibration_path": calibration_path,
+        "comparison_json_path": comparison_json_path,
+        "comparison_markdown_path": comparison_markdown_path,
+    }
+
+
 def run_validation_set_experiment(args: argparse.Namespace) -> dict[str, object]:
     training_examples = _load_training_examples(args)
     validation_examples = load_geominilm_dataset(args.validation_set)
@@ -364,7 +435,6 @@ def run_validation_set_experiment(args: argparse.Namespace) -> dict[str, object]
         minimum_validation_records=args.minimum_validation_records,
         minimum_threshold_margin=args.minimum_threshold_margin,
     )
-    result.comparison["category_results"] = build_category_results(args.failure_taxonomy, result.comparison)
     predictions_path = write_jsonl_records(result.predictions, args.predictions_dir / "validation_predictions.jsonl")
     honest_baseline_path = write_jsonl_records(
         result.honest_baseline_predictions,
@@ -373,8 +443,20 @@ def run_validation_set_experiment(args: argparse.Namespace) -> dict[str, object]
 
     eval_dir = _eval_dir(args, dry_run=False, validation=True)
     manifest_path = write_evaluation_manifest(args, split_specs, eval_dir)
-    manifest_check_path = write_manifest_check(args, eval_dir)
-    split_validation_path = write_split_validation(split_validation.to_dict(), eval_dir / "split_validation.json")
+    manifest_check = build_manifest_check(args)
+    split_validation_payload = split_validation.to_dict()
+    result.comparison["manifest_check"] = {
+        "passed": manifest_check["passed"],
+        "mismatches": manifest_check["mismatches"],
+    }
+    result.comparison["split_validation"] = {
+        "passed": split_validation_payload["passed"],
+        "issue_count": len(split_validation_payload["issues"]),
+    }
+    result.comparison["category_results"] = build_category_results(args.failure_taxonomy, result.comparison)
+    result.comparison["production_decision"] = build_production_decision(result.comparison)
+    manifest_check_path = write_auxiliary_json(manifest_check, eval_dir / "manifest_check.json")
+    split_validation_path = write_split_validation(split_validation_payload, eval_dir / "split_validation.json")
     calibration_path = write_auxiliary_json(
         result.comparison["confidence_calibration"],
         eval_dir / "confidence_calibration.json",
@@ -479,11 +561,22 @@ def build_category_results(taxonomy_path: Path, comparison: dict[str, object]) -
     return category_results
 
 
+def workflow_family_map(taxonomy_path: Path) -> dict[str, str]:
+    taxonomy = json.loads(taxonomy_path.read_text(encoding="utf-8"))
+    family_by_id: dict[str, str] = {}
+    for category_name, category in taxonomy["categories"].items():
+        for key in ("failure_ids", "training_expansion_ids", "validation_ids"):
+            for record_id in category.get(key, []):
+                family_by_id[record_id] = category_name
+    return family_by_id
+
+
 def _eval_dir(
     args: argparse.Namespace,
     *,
     dry_run: bool,
     held_out: bool = False,
+    grouped_held_out: bool = False,
     validation: bool = False,
 ) -> Path:
     if args.eval_dir is not None:
@@ -492,6 +585,8 @@ def _eval_dir(
         return Path("outputs/eval/geominilm_validation")
     if held_out:
         return Path("outputs/eval/geominilm_heldout")
+    if grouped_held_out:
+        return Path("outputs/eval/geominilm_grouped_heldout")
     return Path("outputs/eval/geominilm_dry_run" if dry_run else "outputs/eval/geominilm_training")
 
 
@@ -570,16 +665,14 @@ def write_evaluation_manifest(args: argparse.Namespace, split_specs: list[SplitS
     return write_auxiliary_json(manifest, eval_dir / "evaluation_manifest.json")
 
 
-def write_manifest_check(args: argparse.Namespace, eval_dir: Path) -> Path:
+def build_manifest_check(args: argparse.Namespace) -> dict[str, object]:
     if args.evaluation_manifest.exists():
-        check = validate_manifest_file(args.evaluation_manifest)
-    else:
-        check = {
-            "passed": False,
-            "mismatches": ["evaluation_manifest_missing"],
-            "expected": None,
-        }
-    return write_auxiliary_json(check, eval_dir / "manifest_check.json")
+        return validate_manifest_file(args.evaluation_manifest)
+    return {
+        "passed": False,
+        "mismatches": ["evaluation_manifest_missing"],
+        "expected": None,
+    }
 
 
 def write_split_validation(payload: dict[str, object], path: Path) -> Path:

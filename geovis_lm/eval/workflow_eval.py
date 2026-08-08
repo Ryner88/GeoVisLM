@@ -29,6 +29,7 @@ class RecordScore:
     score: float
     passed: bool
     components: dict[str, float]
+    confidence: float | None = None
     findings: list[str] = field(default_factory=list)
 
 
@@ -57,6 +58,7 @@ class EvaluationReport:
                     "score": round(record.score, 4),
                     "passed": record.passed,
                     "components": {key: round(value, 4) for key, value in record.components.items()},
+                    "confidence": round(record.confidence, 4) if record.confidence is not None else None,
                     "findings": record.findings,
                 }
                 for record in self.records
@@ -141,6 +143,7 @@ def evaluate_records(
     prediction_records: list[dict[str, Any]],
     *,
     pass_threshold: float = DEFAULT_PASS_THRESHOLD,
+    score_context_fields: bool = True,
 ) -> EvaluationReport:
     _validate_pass_threshold(pass_threshold)
     predictions_by_id = {record["id"]: record for record in prediction_records}
@@ -160,7 +163,7 @@ def evaluate_records(
                 )
             )
             continue
-        scores.append(score_record(expected, prediction, pass_threshold=pass_threshold))
+        scores.append(score_record(expected, prediction, pass_threshold=pass_threshold, score_context_fields=score_context_fields))
 
     summary_score = sum(record.score for record in scores) / len(scores) if scores else 0.0
     return EvaluationReport(
@@ -179,34 +182,48 @@ def score_record(
     prediction: dict[str, Any],
     *,
     pass_threshold: float = DEFAULT_PASS_THRESHOLD,
+    score_context_fields: bool = True,
 ) -> RecordScore:
     expected_steps = expected[EXPECTED_WORKFLOW_FIELD]
     prediction_steps = prediction[_workflow_key(prediction, prediction=True)]
 
     components = {
-        "instruction_relevance": _text_overlap(expected["instruction"], prediction.get("instruction", "")),
-        "required_inputs": _input_score(expected.get("inputs", {}), prediction.get("inputs", {})),
         "ordered_steps": _ordered_step_score(expected_steps, prediction_steps),
         "tool_choice": _step_field_score(expected_steps, prediction_steps, "tool"),
         "output_paths": _step_field_score(expected_steps, prediction_steps, "output"),
         "explanation_quality": _explanation_score(expected.get("explanation", ""), prediction.get("explanation", "")),
     }
-    weights = {
-        "instruction_relevance": 0.10,
-        "required_inputs": 0.20,
-        "ordered_steps": 0.30,
-        "tool_choice": 0.15,
-        "output_paths": 0.15,
-        "explanation_quality": 0.10,
-    }
+    if score_context_fields:
+        components = {
+            "instruction_relevance": _text_overlap(expected["instruction"], prediction.get("instruction", "")),
+            "required_inputs": _input_score(expected.get("inputs", {}), prediction.get("inputs", {})),
+            **components,
+        }
+        weights = {
+            "instruction_relevance": 0.10,
+            "required_inputs": 0.20,
+            "ordered_steps": 0.30,
+            "tool_choice": 0.15,
+            "output_paths": 0.15,
+            "explanation_quality": 0.10,
+        }
+    else:
+        weights = {
+            "ordered_steps": 0.50,
+            "tool_choice": 0.25,
+            "output_paths": 0.20,
+            "explanation_quality": 0.05,
+        }
     score = sum(components[name] * weight for name, weight in weights.items())
     findings = _record_findings(expected, prediction, components)
+    confidence = _prediction_confidence(prediction)
     return RecordScore(
         record_id=expected["id"],
         domain=expected.get("domain"),
         score=score,
         passed=score >= pass_threshold and not any(finding.startswith("invalid_") for finding in findings),
         components=components,
+        confidence=confidence,
         findings=findings,
     )
 
@@ -396,3 +413,10 @@ def _empty_components() -> dict[str, float]:
         "output_paths": 0.0,
         "explanation_quality": 0.0,
     }
+
+
+def _prediction_confidence(prediction: dict[str, Any]) -> float | None:
+    confidence = prediction.get("confidence")
+    if not isinstance(confidence, (int, float)) or not math.isfinite(confidence):
+        return None
+    return max(0.0, min(1.0, float(confidence)))

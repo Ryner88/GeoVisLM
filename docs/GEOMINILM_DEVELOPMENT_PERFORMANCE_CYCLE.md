@@ -9,7 +9,11 @@
 - Frozen production validation split: off-limits for development selection
 - Dashboard integration: blocked until a future formal production gate passes
 
-This cycle uses training-derived leave-one-out development evaluation only.
+This cycle used training-derived leave-one-out development evaluation. That
+result is now historical: the repaired protocol uses workflow-only scoring,
+grouped workflow-family holdouts, and treats template code plus retrieval data as
+one versioned candidate. The repaired protocol is implemented and verified,
+pending protocol review before the next performance cycle.
 
 ## Preserved Development Baseline
 
@@ -20,6 +24,8 @@ This cycle uses training-derived leave-one-out development evaluation only.
 - Baseline failed held-out examples: `11`
 
 ## Current Development Result
+
+Historical leave-one-out result under the legacy development protocol:
 
 Command:
 
@@ -84,6 +90,10 @@ Result: `77 passed in 14.97s`
 - Locked candidate evaluated: `9af23d8`
 - Lock basis: training-derived development result plus passing full regression suite
 - Production status: `9af23d8` was not accepted; dashboard integration remains blocked
-- Future production use: requires a new training/development-only performance cycle
-  followed by a newly scheduled formal one-shot gate before any production
-  acceptance decision
+- Legacy candidate rescore under repaired workflow-only scoring: `0.6377`
+- Comparable honest baseline under repaired workflow-only scoring: `0.3682`
+- Repaired-protocol failures on the historical frozen set: `11/14`
+- Future production use: requires protocol review, a new training/development-only
+  performance cycle, locked workflow-only thresholds/category floors, and a
+  newly scheduled formal one-shot gate on a new sealed shadow set before any
+  production acceptance decision

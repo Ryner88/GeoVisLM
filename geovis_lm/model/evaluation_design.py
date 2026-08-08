@@ -18,6 +18,9 @@ DEFAULT_PRODUCTION_PASS_THRESHOLD = 0.75
 DEFAULT_NEAR_DUPLICATE_THRESHOLD = 0.85
 DEFAULT_MINIMUM_VALIDATION_RECORDS = 12
 DEFAULT_MINIMUM_THRESHOLD_MARGIN = 0.01
+DEFAULT_CATEGORY_PASS_THRESHOLD = 0.75
+DEFAULT_MAX_EXPECTED_CALIBRATION_ERROR = 0.2
+DEFAULT_MAXIMUM_CALIBRATION_ERROR = 0.35
 
 
 @dataclass(frozen=True)
@@ -219,7 +222,9 @@ def build_calibration_report(
         raise EvaluationInputError(["calibration bins must be at least 1"])
     records = []
     for record in report.records:
-        confidence = max(0.0, min(1.0, record.score))
+        if record.confidence is None:
+            continue
+        confidence = max(0.0, min(1.0, record.confidence))
         records.append(
             {
                 "id": record.record_id,
@@ -228,6 +233,16 @@ def build_calibration_report(
                 "score": record.score,
             }
         )
+    if not records:
+        return {
+            "method": "not_reported_no_model_confidence",
+            "record_count": report.total_records,
+            "confidence_record_count": 0,
+            "bins": [],
+            "reliability_bins": [],
+            "expected_calibration_error": None,
+            "maximum_calibration_error": None,
+        }
     reliability_bins = []
     expected_calibration_error = 0.0
     maximum_calibration_error = 0.0
@@ -256,8 +271,9 @@ def build_calibration_report(
             }
         )
     return {
-        "method": "workflow_score_as_confidence_proxy",
-        "record_count": total,
+        "method": "prediction_confidence",
+        "record_count": report.total_records,
+        "confidence_record_count": total,
         "bins": reliability_bins,
         "reliability_bins": reliability_bins,
         "expected_calibration_error": round(expected_calibration_error, 4),
@@ -274,6 +290,38 @@ def build_production_decision(comparison: dict[str, Any]) -> dict[str, Any]:
     passed_threshold = metric >= required_metric_value
     beats_honest_baseline = metric > baseline
     has_expanded_validation_set = comparison["validation_record_count"] >= minimum_validation_records
+    all_records_passed = bool(comparison.get("trained_passed"))
+    manifest_check = comparison.get("manifest_check") or {}
+    split_validation = comparison.get("split_validation") or {}
+    manifest_passed = bool(manifest_check.get("passed"))
+    split_validation_passed = bool(split_validation.get("passed"))
+    category_results = comparison.get("category_results") or {}
+    category_threshold = comparison.get("category_pass_threshold", DEFAULT_CATEGORY_PASS_THRESHOLD)
+    category_floor_passed = bool(category_results) and all(
+        result.get("trained_score", 0.0) >= category_threshold for result in category_results.values()
+    )
+    confidence = comparison.get("confidence_calibration") or {}
+    max_ece = comparison.get("maximum_expected_calibration_error", DEFAULT_MAX_EXPECTED_CALIBRATION_ERROR)
+    max_mce = comparison.get("maximum_calibration_error_limit", DEFAULT_MAXIMUM_CALIBRATION_ERROR)
+    ece = confidence.get("expected_calibration_error")
+    mce = confidence.get("maximum_calibration_error")
+    confidence_gate_passed = (
+        confidence.get("method") == "prediction_confidence"
+        and isinstance(ece, (int, float))
+        and isinstance(mce, (int, float))
+        and ece <= max_ece
+        and mce <= max_mce
+    )
+    authorization_checks = {
+        "beats_honest_baseline": beats_honest_baseline,
+        "passes_threshold": passed_threshold,
+        "has_expanded_validation_set": has_expanded_validation_set,
+        "all_records_passed": all_records_passed,
+        "manifest_check_passed": manifest_passed,
+        "split_validation_passed": split_validation_passed,
+        "category_floor_passed": category_floor_passed,
+        "confidence_gate_passed": confidence_gate_passed,
+    }
     return {
         "primary_metric": comparison["primary_metric"],
         "pass_threshold": comparison["pass_threshold"],
@@ -286,7 +334,16 @@ def build_production_decision(comparison: dict[str, Any]) -> dict[str, Any]:
         "validation_record_count": comparison["validation_record_count"],
         "minimum_validation_records": minimum_validation_records,
         "has_expanded_validation_set": has_expanded_validation_set,
-        "dashboard_integration_allowed": beats_honest_baseline and passed_threshold and has_expanded_validation_set,
+        "all_records_passed": all_records_passed,
+        "manifest_check_passed": manifest_passed,
+        "split_validation_passed": split_validation_passed,
+        "category_pass_threshold": category_threshold,
+        "category_floor_passed": category_floor_passed,
+        "maximum_expected_calibration_error": max_ece,
+        "maximum_calibration_error_limit": max_mce,
+        "confidence_gate_passed": confidence_gate_passed,
+        "authorization_checks": authorization_checks,
+        "dashboard_integration_allowed": all(authorization_checks.values()),
     }
 
 

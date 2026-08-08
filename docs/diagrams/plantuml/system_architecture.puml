@@ -4,23 +4,44 @@ title GeoVisLM Staging Deployment Architecture
 skinparam componentStyle rectangle
 skinparam shadowing false
 
-actor User
+actor "Authenticated User" as User
 cloud "Cloudflare" as Cloudflare
-component "Cloudflare Access\nProtected Staging" as Access
+component "Cloudflare Access\noptional staging perimeter" as Access
 component "Caddy\nReverse Proxy" as Caddy
-component "Dashboard\nFastAPI / Future UI\n127.0.0.1:8000" as Dashboard
-component "Worker\nBackground Jobs" as Worker
-database "PostGIS\nMetadata & Run State" as Database
-storage "Persistent Storage\nOutputs / Models / Media" as Storage
+
+rectangle "Dashboard Application\nFastAPI + first-party HTML UI" as Dashboard {
+  component "Login / Signup" as Login
+  component "Session Cookie\ngeovis_session" as Session
+  component "Project Workspace" as Projects
+  component "Runs + Uploads" as Runs
+  component "Report Comments" as Comments
+  component "Memberships + Invites" as Members
+  component "Audit Events" as Audit
+}
+
+queue "File-Backed Job Queue" as Jobs
+component "Worker Loop\nclaim, analyze, update" as Worker
+database "PostGIS\noptional metadata store" as PostGIS
+storage "Shared Output Storage\ninputs, maps, vectors, renders, reports, logs" as Storage
 
 User --> Cloudflare
 Cloudflare --> Access
 Access --> Caddy
 Caddy --> Dashboard
-Dashboard --> Worker
-Dashboard --> Database
-Worker --> Database
-Dashboard --> Storage
-Worker --> Storage
+
+Login --> Session
+Session --> Projects
+Projects --> Members
+Projects --> Runs
+Runs --> Jobs : queue run
+Runs --> Storage : persisted inputs
+Comments --> Storage : comments.json
+Members --> Storage : members.json
+Audit --> Storage : audit.jsonl
+
+Dashboard --> PostGIS : optional metadata mirror
+Worker --> Jobs : poll and claim
+Worker --> Storage : read inputs / write outputs
+Worker --> PostGIS : optional run status and artifacts
 
 @enduml

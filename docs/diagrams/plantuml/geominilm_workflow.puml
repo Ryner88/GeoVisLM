@@ -1,34 +1,52 @@
 @startuml
-title GeoMiniLM Workflow
+title GeoMiniLM Prototype Inference - Dashboard Integration Blocked
 
+skinparam componentStyle rectangle
 skinparam shadowing false
 
-actor User
+actor "Developer / Evaluator" as User
 
-component "User Request" as Request
-component "Prompt Normalizer" as Normalizer
-component "GeoMiniLM" as LLM
-component "Workflow Validator" as Validator
-component "GIS Executor" as GIS
-component "ParaView Executor" as ParaView
-component "Report Generator" as Reports
-database "Workflow Dataset" as Dataset
-database "Outputs" as Outputs
+rectangle "GeoMiniLM Candidate\nversioned as code + retrieval data" as Candidate {
+  component "Prompt Builder\ninstruction + inputs" as Prompt
+  database "TF-IDF Retrieval Checkpoint\ntraining workflow records" as Checkpoint
+  component "Nearest-Neighbor Retriever" as Retriever
+  component "Handwritten Workflow\nTemplate Fallbacks" as Templates
+  component "Prediction Record\nworkflow + explanation + confidence" as Prediction
+}
 
-User --> Request
-Request --> Normalizer
-Normalizer --> LLM
+database "Training-Derived Data" as Training
+database "Frozen Regression Set\n14 records; no tuning" as Frozen
+database "Sealed Shadow Set\nfuture production gate" as Shadow
+component "Workflow Evaluator\nworkflow-only scoring" as Evaluator
+component "Production Gate Decision" as Gate
 
-Dataset --> LLM
+cloud "Dashboard GIS / QGIS / ParaView Execution" as Dashboard
 
-LLM --> Validator
-Validator --> GIS
-Validator --> ParaView
+User --> Prompt
+Training --> Checkpoint
+Prompt --> Retriever
+Checkpoint --> Retriever
+Retriever --> Templates : if no same-id retrieval
+Retriever --> Prediction : retrieved workflow
+Templates --> Prediction : templated workflow
 
-GIS --> Outputs
-ParaView --> Outputs
+Prediction --> Evaluator
+Frozen --> Evaluator : regression benchmark only
+Shadow --> Evaluator : future one-shot acceptance
+Evaluator --> Gate
 
-Outputs --> Reports
-Reports --> User
+Gate -[#red,dashed]-> Dashboard : blocked until gate passes
+
+note right of Candidate
+The prototype is not a generic LLM.
+Current predictions combine TF-IDF retrieval
+with handwritten templates, so both are part
+of the versioned candidate.
+end note
+
+note bottom of Dashboard
+No runtime GeoMiniLM workflow validator or
+direct dashboard execution path is authorized.
+end note
 
 @enduml

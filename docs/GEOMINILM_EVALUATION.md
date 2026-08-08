@@ -31,12 +31,23 @@ workflow field may be either `predicted_workflow` or `expected_workflow`:
 
 Scores range from `0.0` to `1.0`. The default pass threshold is `0.75`.
 
+Compatibility and oracle sanity checks can still score the full record:
+
 - Instruction relevance: 10%
 - Required input coverage: 20%
 - Ordered workflow steps: 30%
 - Tool choice: 15%
 - Output paths or states: 15%
 - Explanation quality: 10%
+
+Model selection and validation-set comparisons now use workflow-only scoring so
+predictions are not rewarded for copying the expected record's original
+`instruction` and `inputs` fields:
+
+- Ordered workflow steps: 50%
+- Tool choice: 25%
+- Output paths or states: 20%
+- Explanation quality: 5%
 
 The report passes only when the summary score meets the threshold and every
 expected record has a passing prediction.
@@ -98,16 +109,41 @@ The split validation step checks exact duplicate records, duplicate ids,
 near-duplicate train/validation leakage using a locked Jaccard threshold of
 `0.85` with containment overlap for edited copies, and current
 dataset/taxonomy checksums against the frozen manifest.
-Calibration currently reports reliability bins and calibration error using the
-workflow score as a confidence proxy until model-native confidence values exist.
+Calibration reports reliability bins from the prediction confidence field. For
+the current prototype this confidence is the TF-IDF retrieval similarity, not the
+evaluator score.
+
+For predictions routed through `workflow_template`, TF-IDF similarity is only a
+retrieval/routing confidence. It is not a validated confidence estimate for the
+template output itself. Future calibration work should either calibrate by
+prediction route or add a separate template-output confidence signal.
 
 ## Development Model Selection
 
-Do not use the frozen `14`-record validation split for iterative tuning. Further
-model changes before the August 6 gate should be selected with training-derived
-development runs only.
+Do not use the frozen `14`-record validation split for iterative tuning. That
+set is now a regression benchmark because its detailed outcomes have been
+reviewed repeatedly. Future production acceptance requires a new sealed shadow
+set.
 
-Use leave-one-out evaluation across the starter and training expansion splits:
+Use grouped workflow-family holdout evaluation across the starter and training
+expansion splits:
+
+```bash
+.venv/bin/python scripts/train_geominilm.py \
+  --dataset data/geominilm/starter_workflows.jsonl \
+  --extra-training-data data/geominilm/training_expansion_workflows.jsonl \
+  --grouped-held-out-eval \
+  --eval-dir outputs/eval/geominilm_grouped_heldout
+```
+
+The grouped protocol holds out entire workflow families, not just individual
+records. The versioned candidate includes both retrieval data and the handwritten
+template code path, because either component can encode development examples.
+Grouped data holdouts do not, by themselves, remove code-level leakage when
+template predicates were authored with knowledge of the held-out family. Template
+development therefore needs a separate sealed, pre-authored challenge set.
+
+The older leave-one-out command remains available as a diagnostic only:
 
 ```bash
 .venv/bin/python scripts/train_geominilm.py \
@@ -128,6 +164,24 @@ Candidate `9af23d8` was evaluated exactly once against
 production gate. That candidate failed. The next performance cycle must remain
 training/development-only, not another tuning loop against the frozen validation
 split.
+
+The repaired scoring protocol reports the same candidate lower because copied
+request context no longer contributes to the primary score:
+
+- Workflow-only trained validation score: `0.6377`
+- Workflow-only honest baseline score: `0.3682`
+- Failed validation examples: `11/14`
+- Prediction source strategies: `workflow_template` for `14/14`
+
+Interpret this as a protocol-migration rescore, not a new production acceptance
+attempt. The historical `0.7201` reports remain legacy-scoring gate results. Do
+not reuse the `0.7600` authorization threshold blindly: the metric changed, so
+the next threshold and per-category floors must be locked under workflow-only
+scoring before evaluating a new sealed shadow set.
+
+Dashboard authorization is now computed only after manifest validation,
+split/leakage validation, all-record pass status, per-category floors, and
+confidence checks are attached to the production decision.
 
 Current expanded-set status from the `2026-08-08` production gate:
 

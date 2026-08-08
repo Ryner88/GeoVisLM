@@ -126,14 +126,58 @@ def test_train_geominilm_held_out_eval_writes_excluded_fold_reports(tmp_path):
     assert metadata["training"]["fold_count"] == 12
     assert comparison["heldout_summary_score"] < comparison["baseline_summary_score"]
     assert comparison["confidence_calibration"] == calibration
-    assert calibration["method"] == "workflow_score_as_confidence_proxy"
+    assert calibration["method"] == "prediction_confidence"
     assert "expected_calibration_error" in calibration
+    assert comparison["prediction_strategy_counts"] == {"workflow_template": 12}
     assert comparison["failed_examples"]
     assert (eval_dir / "evaluation_report.md").exists()
     for prediction in predictions:
         assert prediction["id"] not in prediction["fold_training_record_ids"]
         assert prediction["source_checkpoint_record_id"] != prediction["id"]
     assert "GeoMiniLM held-out evaluation complete" in result.stdout
+
+
+def test_train_geominilm_grouped_held_out_eval_writes_family_reports(tmp_path):
+    output_dir = tmp_path / "model"
+    predictions_dir = tmp_path / "predictions"
+    eval_dir = tmp_path / "eval"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/train_geominilm.py",
+            "--dataset",
+            "data/geominilm/starter_workflows.jsonl",
+            "--extra-training-data",
+            "data/geominilm/training_expansion_workflows.jsonl",
+            "--output-dir",
+            str(output_dir),
+            "--predictions-dir",
+            str(predictions_dir),
+            "--eval-dir",
+            str(eval_dir),
+            "--grouped-held-out-eval",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    metadata = json.loads((output_dir / "grouped_heldout_metadata.json").read_text(encoding="utf-8"))
+    comparison = json.loads((eval_dir / "baseline_comparison.json").read_text(encoding="utf-8"))
+    predictions = [
+        json.loads(line)
+        for line in (predictions_dir / "grouped_heldout_predictions.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+
+    assert metadata["training_status"] == "grouped_held_out_complete"
+    assert metadata["training"]["candidate_components"] == ["tfidf_retrieval_checkpoint", "workflow_template_code"]
+    assert comparison["workflow_family_count"] == 5
+    assert comparison["prediction_strategy_counts"] == {"workflow_template": 29}
+    for prediction in predictions:
+        for grouped_id in prediction["heldout_group_record_ids"]:
+            assert grouped_id not in prediction["fold_training_record_ids"]
+    assert "GeoMiniLM grouped held-out evaluation complete" in result.stdout
 
 
 def test_train_geominilm_validation_experiment_writes_honest_baseline_reports(tmp_path):
@@ -195,14 +239,26 @@ def test_train_geominilm_validation_experiment_writes_honest_baseline_reports(tm
     assert split_validation["passed"] is True
     assert split_validation["issues"] == []
     assert manifest_check["passed"] is True
-    assert calibration["method"] == "workflow_score_as_confidence_proxy"
+    assert comparison["trained_validation_score"] == 0.6377
+    assert comparison["honest_baseline_score"] == 0.3682
+    assert comparison["failure_count"] == 11
+    assert calibration["method"] == "prediction_confidence"
     assert "expected_calibration_error" in calibration
     assert "reliability_bins" in calibration
-    assert production_decision["dashboard_integration_allowed"] == (
-        comparison["trained_validation_score"] > comparison["honest_baseline_score"]
-        and comparison["trained_validation_score"] >= production_decision["required_metric_value"]
-        and comparison["validation_record_count"] >= comparison["minimum_validation_records"]
-    )
+    assert comparison["manifest_check"]["passed"] is True
+    assert comparison["split_validation"]["passed"] is True
+    assert comparison["prediction_strategy_counts"] == {"workflow_template": 14}
+    assert production_decision["authorization_checks"] == {
+        "all_records_passed": False,
+        "beats_honest_baseline": True,
+        "category_floor_passed": False,
+        "confidence_gate_passed": False,
+        "has_expanded_validation_set": True,
+        "manifest_check_passed": True,
+        "passes_threshold": False,
+        "split_validation_passed": True,
+    }
+    assert production_decision["dashboard_integration_allowed"] is False
     assert (predictions_dir / "honest_baseline_predictions.jsonl").exists()
     assert (eval_dir / "evaluation_manifest.json").exists()
     assert (eval_dir / "experiment_comparison.md").exists()
