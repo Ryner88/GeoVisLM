@@ -9,10 +9,12 @@ geospatial and scientific visualization model planned for GeoVisLM.
 - `training_expansion_workflows.jsonl`: additional stratified training and
   development examples authored after the held-out failure analysis. These are
   training-only records.
-- `validation_workflows.jsonl`: frozen independently authored expanded
-  validation examples. Do not copy these records into training data.
+- `validation_workflows.jsonl`: frozen independently authored 14-record
+  regression benchmark. Do not copy these records into training data or use
+  them for model, template, retrieval, prompt, threshold, or floor tuning.
 - `evaluation_manifest.json`: versioned frozen split contract with dataset,
-  taxonomy, and split checksums for the production validation gate.
+  taxonomy, and split checksums for the historical production validation gate
+  and current regression benchmark.
 - `failure_taxonomy.json`: categorizes the first held-out failures by
   operation, parameters, output structure, and coverage records.
 
@@ -68,12 +70,16 @@ exports, ParaView colorbar and clipping variants, and reporting review tasks.
 ## Evaluation Splits
 
 - Keep validation ids disjoint from starter and expansion training ids.
-- Update `evaluation_manifest.json` only when intentionally freezing a new
-  evaluation design; production runs verify its checksums before reporting.
-- The current expanded validation split has `14` records stratified across GIS,
+- Update `evaluation_manifest.json` only when intentionally recording a new
+  benchmark contract; regression runs verify its checksums before reporting.
+- The current frozen regression split has `14` records stratified across GIS,
   QGIS, ParaView, and reporting workflows.
+- Use the 14-record split only for regression reporting and protocol migration
+  diagnostics. Future production acceptance requires a new sealed shadow set.
 - Treat the `1.0000` expected-output baseline as an oracle sanity check only.
   It confirms the evaluation pipeline can score perfect predictions, but it is
   not an honest generalization benchmark.
-- Compare improvement experiments against the current held-out reference score
-  of `0.4943` and report per-category failures.
+- Compare development experiments with grouped workflow-family holdouts over
+  training/development records, workflow-only scoring, locked category floors,
+  all-record pass status, semantic and executability checks, and route-aware
+  confidence requirements.

@@ -11,31 +11,36 @@ Status labels:
 
 ## Current Priority Queue
 
-### 1. `[NEXT]` Expand GeoMiniLM Production Evaluation
+### 1. `[NEXT]` Review GeoMiniLM Development-Cycle Contract
 
-Goal: expand GeoMiniLM evaluation beyond the six-example frozen validation set
-so model quality, confidence, and category coverage are credible enough to guide
-product integration decisions.
+Goal: lock the repaired GeoMiniLM development protocol before any new model
+selection work begins. The August 8 production candidate failed, and the
+14-record validation set is now a frozen regression benchmark, not a tuning set
+or active production-evaluation target.
 
 Build:
 
-* Increase the frozen validation set beyond six examples.
-* Add more workflow categories.
-* Record dataset version and checksum.
-* Retain the honest same-set baseline.
-* Add automated duplicate and training/validation leakage tests.
-* Report confidence calibration and per-category results.
-* Compare GeoMiniLM against the honest baseline on the expanded frozen set.
+* Review and approve workflow-only primary scoring.
+* Use grouped workflow-family holdouts for development model selection.
+* Lock per-category score floors before evaluating any future candidate.
+* Require every evaluated record to pass.
+* Require semantic and executability checks for predicted workflows.
+* Require route-aware confidence checks for retrieval and template predictions.
+* Define sealed shadow-set authoring, custody, one-shot use, and retirement
+  rules.
+* Explicitly prohibit model or template tuning against
+  `data/geominilm/validation_workflows.jsonl`.
 
 Acceptance criteria:
 
-* Expanded, stratified validation set is frozen before tuning.
-* Dataset version and checksum are recorded.
-* Honest same-set baseline is retained.
-* Automated duplicate and training/validation leakage tests pass.
-* Confidence calibration and per-category results are reported.
-* GeoMiniLM beats the honest baseline on the expanded frozen set.
-* Full regression suite passes with reproducible results.
+* Development-cycle contract is reviewed and recorded.
+* Workflow-only score, per-category floors, all-record pass requirement,
+  semantic checks, executability checks, route-aware confidence requirements,
+  and sealed shadow-set rules are locked before model selection resumes.
+* The frozen 14-record validation set is used only for regression reporting and
+  protocol migration diagnostics.
+* No model, retrieval, template, or threshold tuning uses the frozen regression
+  set.
 
 ### 2. `[TODO-BLOCKED]` Integrate GeoMiniLM Recommendations into the Dashboard
 
@@ -44,7 +49,10 @@ approval before execution.
 
 Blocked until:
 
-* `Expand GeoMiniLM Production Evaluation` passes its acceptance gate.
+* The development-cycle contract is reviewed.
+* A new training/development-only performance cycle produces a locked candidate
+  under the repaired protocol.
+* A future formal production gate passes on a new sealed shadow set.
 
 Build when unblocked:
 

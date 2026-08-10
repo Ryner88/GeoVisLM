@@ -6,7 +6,8 @@
 - Starting point: `c1a03ed`
 - Previous production candidate: `428af8d`
 - Failed production candidate: `9af23d8`
-- Frozen production validation split: off-limits for development selection
+- Frozen 14-record regression split: off-limits for development selection and
+  tuning
 - Dashboard integration: blocked until a future formal production gate passes
 
 This cycle used training-derived leave-one-out development evaluation. That
@@ -14,6 +15,30 @@ result is now historical: the repaired protocol uses workflow-only scoring,
 grouped workflow-family holdouts, and treats template code plus retrieval data as
 one versioned candidate. The repaired protocol is implemented and verified,
 pending protocol review before the next performance cycle.
+
+## Monday Development-Cycle Contract Target
+
+Target: a reviewed development-cycle contract before model selection resumes.
+The contract prohibits model, retrieval, template, prompt, threshold, and
+category-floor tuning against `data/geominilm/validation_workflows.jsonl`.
+
+Locked protocol for the next cycle:
+
+- Primary score: workflow-only scoring.
+- Development split: grouped workflow-family holdouts.
+- Per-category floors: locked before candidate evaluation.
+- All-record pass: every evaluated record must clear the record-level pass
+  requirement.
+- Semantic checks: predicted workflows must preserve requested operations,
+  parameters, constraints, outputs, and review intent.
+- Executability checks: steps must name runnable tools or known application
+  operations, valid artifacts or states, and executable ordering.
+- Route-aware confidence: retrieval and template routes require separate
+  confidence checks; TF-IDF retrieval similarity cannot stand in for template
+  output confidence.
+- Sealed shadow set: authored and checksum-locked before the gate, hidden from
+  development review, disjoint from training and regression records, evaluated
+  once per locked candidate, then retired to regression evidence.
 
 ## Preserved Development Baseline
 
@@ -59,7 +84,7 @@ Reliability bins:
 
 ## Verification
 
-Targeted development checks that do not read the frozen validation split:
+Targeted development checks that do not read the frozen regression split:
 
 ```bash
 timeout 120 .venv/bin/python -m pytest \

@@ -77,26 +77,30 @@ The command writes:
 
 Use `--fail-on-threshold` when a training or CI job should fail on a low score.
 
-## Expanded Production Validation Gate
+## Frozen Regression Benchmark
 
 The production evaluation design was frozen on `2026-08-03` for the Thursday,
-`2026-08-06` acceptance gate.
+`2026-08-06` acceptance gate and reused once for the failed August 8 candidate.
+After repeated review of detailed outcomes, the 14-record split is no longer a
+tuning or production-acceptance set. It is a frozen regression benchmark for
+checking protocol migrations and guarding against accidental degradation.
 
 - Frozen manifest: `data/geominilm/evaluation_manifest.json`
 - Training splits: `data/geominilm/starter_workflows.jsonl` and
   `data/geominilm/training_expansion_workflows.jsonl`
-- Expanded validation split: `data/geominilm/validation_workflows.jsonl`
+- Frozen regression split: `data/geominilm/validation_workflows.jsonl`
   (`14` records; GIS `4`, QGIS `4`, ParaView `3`, reporting `3`)
-- Primary metric: `trained_validation_score`
-- Locked pass threshold: `0.75`
-- Dashboard threshold margin: `0.01`, so dashboard authorization requires a
-  primary metric of at least `0.76`
-- Minimum expanded validation size for dashboard authorization: `12` records
-- Dashboard integration remains blocked unless `trained_validation_score` is
-  greater than `honest_baseline_score` on the frozen expanded validation set
-  and clears the locked threshold margin.
+- Historical legacy primary metric: `trained_validation_score`
+- Historical locked pass threshold: `0.75`
+- Historical dashboard threshold margin: `0.01`
+- Historical minimum validation size for dashboard authorization: `12` records
 
-Run the production validation experiment with:
+Do not use this split for model, retrieval, template, prompt, category-floor, or
+threshold tuning. Regression runs may be used to compare a locked implementation
+against past behavior, but they must not create a new production acceptance
+decision.
+
+Run a regression benchmark with:
 
 ```bash
 .venv/bin/python scripts/train_geominilm.py \
@@ -105,8 +109,9 @@ Run the production validation experiment with:
   --validation-set data/geominilm/validation_workflows.jsonl
 ```
 
-Validation runs write the existing prediction, honest baseline, oracle sanity,
-per-record, and per-category reports, plus:
+Regression runs write the existing prediction, honest baseline, oracle sanity,
+per-record, and per-category reports, plus historical production-decision
+artifacts:
 
 - `outputs/eval/geominilm_validation/evaluation_manifest.json`
 - `outputs/eval/geominilm_validation/manifest_check.json`
@@ -116,11 +121,10 @@ per-record, and per-category reports, plus:
 
 The split validation step checks exact duplicate records, duplicate ids,
 near-duplicate train/validation leakage using a locked Jaccard threshold of
-`0.85` with containment overlap for edited copies, and current
-dataset/taxonomy checksums against the frozen manifest.
-Calibration reports reliability bins from the prediction confidence field. For
-the current prototype this confidence is the TF-IDF retrieval similarity, not the
-evaluator score.
+`0.85` with containment overlap for edited copies, and current dataset/taxonomy
+checksums against the frozen manifest. Calibration reports reliability bins from
+the prediction confidence field. For the current prototype this confidence is
+the TF-IDF retrieval similarity, not the evaluator score.
 
 For predictions routed through `workflow_template`, TF-IDF similarity is only a
 retrieval/routing confidence. It is not a validated confidence estimate for the
@@ -133,6 +137,31 @@ Do not use the frozen `14`-record validation split for iterative tuning. That
 set is now a regression benchmark because its detailed outcomes have been
 reviewed repeatedly. Future production acceptance requires a new sealed shadow
 set.
+
+The next development-cycle contract must be reviewed before model selection
+resumes. The locked protocol is:
+
+- Primary score: workflow-only evaluator score.
+- Development split: grouped workflow-family holdouts across starter and
+  training-expansion records.
+- Candidate scope: retrieval checkpoint, handwritten template code, confidence
+  logic, thresholds, and category floors are versioned together.
+- Per-category floors: locked before candidate selection and reported for every
+  workflow category.
+- All-record pass: no evaluated record may fall below the locked record-level
+  pass threshold.
+- Semantic checks: predicted steps must preserve the requested operation,
+  parameters, constraints, outputs, and review intent.
+- Executability checks: predicted workflows must name runnable tools or known
+  application operations, valid artifact paths or states, and ordered steps that
+  can be executed without hidden dependencies.
+- Route-aware confidence: retrieval predictions and template predictions must
+  meet separately calibrated confidence requirements; retrieval similarity alone
+  is not accepted as confidence for template output.
+- Sealed shadow set: authored before gate scheduling, kept out of development
+  review, disjoint from training and regression records, checksum-locked,
+  evaluated once per locked candidate, and retired to regression evidence after
+  the gate.
 
 Use grouped workflow-family holdout evaluation across the starter and training
 expansion splits:
@@ -171,7 +200,7 @@ The August 4 training-derived development run produced:
 Candidate `9af23d8` was evaluated exactly once against
 `data/geominilm/validation_workflows.jsonl` during the `2026-08-08` formal
 production gate. That candidate failed. The next performance cycle must remain
-training/development-only, not another tuning loop against the frozen validation
+training/development-only, not another tuning loop against the frozen regression
 split.
 
 The repaired scoring protocol reports the same candidate lower because copied
@@ -193,7 +222,7 @@ Dashboard authorization is now computed only after manifest validation,
 split/leakage validation, all-record pass status, per-category floors, and
 confidence checks are attached to the production decision.
 
-Current expanded-set status from the `2026-08-08` production gate:
+Current regression-set status from the `2026-08-08` production gate:
 
 - Status: production evaluation framework implemented; expanded production
   acceptance gate not passed.
