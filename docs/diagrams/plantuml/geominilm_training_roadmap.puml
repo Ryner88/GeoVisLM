@@ -1,0 +1,110 @@
+@startuml
+title GeoMiniLM Next Development Cycle Roadmap
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam packageStyle rectangle
+
+actor "Reviewer / Developer" as Developer
+
+package "Next Development Cycle Priorities" as Priorities {
+  component "1. Language Robustness\nparaphrase + shorthand + noisy prompts" as Language
+  component "2. Multi-Step GIS Composition\ninputs + intermediate artifacts + outputs" as MultiStep
+  component "3. Confidence and Abstention\nclarify, abstain, or proceed safely" as Abstention
+}
+
+package "Development Data and Coverage" as Development {
+  database "Development Training Data\nstarter + expansion + new authored records" as DevData
+  component "QGIS Production\nWorkflow Pack" as QGIS
+  component "ParaView Scientific\nVisualization Pack" as ParaView
+  component "Domain Workflow Packs\nflood, wildfire, planning,\nmonitoring, terrain" as DomainPacks
+}
+
+package "Governance Path" as Governance {
+  database "Scenario-Grouped\nDevelopment Records" as GroupedData
+  database "Grouped Holdout\nFamilies" as Holdouts
+  component "Workflow-Only Scoring" as Scoring
+  component "Route-Aware\nCalibration" as Calibration
+  component "Candidate Lock\nretrieval + templates + routing\nconfidence + thresholds + floors" as CandidateLock
+  component "One-Shot Frozen Gate\nformal production evaluation" as FrozenGate
+  component "Gate Decision\nall conditions must pass" as GateDecision
+  component "Deployment Eligible" as Eligible
+}
+
+package "Gate Conditions" as Conditions {
+  component "Integrity and\nManifest Checks" as Integrity
+  component "Duplicate and\nLeakage Checks" as Leakage
+  component "Score Threshold\nrequired value 0.7600" as Threshold
+  component "Configured\nConfidence Gate" as ConfidenceGate
+  component "All-Record and\nCategory-Floor Gates" as CategoryGate
+}
+
+package "Current Production Status" as Status {
+  component "Prime Deployment\ncurrently blocked" as PrimeBlocked
+  component "Dashboard Integration\ncurrently blocked" as DashboardBlocked
+  component "Failed Candidate\nnew development-only cycle" as FailedCandidate
+}
+
+Developer --> Language
+Developer --> MultiStep
+Developer --> Abstention
+
+Language --> DevData
+MultiStep --> DevData
+Abstention --> DevData
+QGIS --> DevData
+ParaView --> DevData
+DomainPacks --> DevData
+
+DevData --> GroupedData : group related paraphrases\nand workflow variants together
+GroupedData --> Holdouts : development split
+Holdouts --> Scoring
+Scoring --> Calibration
+Calibration --> CandidateLock
+CandidateLock --> FrozenGate : locked candidate only
+
+FrozenGate --> Integrity
+FrozenGate --> Leakage
+FrozenGate --> Threshold
+FrozenGate --> ConfidenceGate
+FrozenGate --> CategoryGate
+
+Leakage --> GateDecision
+Threshold --> GateDecision
+ConfidenceGate --> GateDecision
+CategoryGate --> GateDecision
+Integrity --> GateDecision
+
+GateDecision --> Eligible : all conditions pass
+GateDecision --> FailedCandidate : any gate fails
+FailedCandidate --> PrimeBlocked
+FailedCandidate --> DashboardBlocked
+
+note right of Priorities
+The next cycle should prioritize:
+language robustness, multi-step GIS
+composition, and confidence/abstention.
+end note
+
+note bottom of Development
+Cross-cutting concerns for every pack:
+- geospatial correctness
+- artifact contracts
+- recovery behavior
+- cross-tool routing
+end note
+
+note bottom of FrozenGate
+Frozen-set metrics and failed-record details
+belong in the acceptance report, not in this
+roadmap. Do not tune from frozen outcomes.
+end note
+
+note bottom of FailedCandidate
+Failed production gates return to a new
+development-only cycle. The frozen gate
+does not feed examples, thresholds, or
+template changes directly back into training.
+end note
+
+@enduml

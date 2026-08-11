@@ -32,7 +32,7 @@ Source:
 docs/diagrams/plantuml/system_architecture.puml
 ```
 
-Image:
+Reference rendering:
 
 ```text
 docs/diagrams/images/system_architecture.png
@@ -52,7 +52,7 @@ Source:
 docs/diagrams/plantuml/component_diagram.puml
 ```
 
-Image:
+Reference rendering:
 
 ```text
 docs/diagrams/images/component_diagram.png
@@ -72,7 +72,7 @@ Source:
 docs/diagrams/plantuml/terrain_pipeline_sequence.puml
 ```
 
-Image:
+Reference rendering:
 
 ```text
 docs/diagrams/images/terrain_pipeline_sequence.png
@@ -92,7 +92,7 @@ Source:
 docs/diagrams/plantuml/geominilm_workflow.puml
 ```
 
-Image:
+Reference rendering:
 
 ```text
 docs/diagrams/images/geominilm_workflow.png
@@ -112,7 +112,7 @@ Source:
 docs/diagrams/plantuml/geominilm_evaluation_gate.puml
 ```
 
-Image:
+Reference rendering:
 
 ```text
 docs/diagrams/images/geominilm_evaluation_gate.png
@@ -121,6 +121,31 @@ docs/diagrams/images/geominilm_evaluation_gate.png
 Purpose:
 
 Shows the corrected evaluation boundary: grouped development evaluation, versioned retriever plus template code candidate, frozen regression benchmark, future sealed shadow set, manifest/leakage/semantic/category/confidence checks, candidate lock, and dashboard authorization decision.
+
+---
+
+### 6. GeoMiniLM Training Roadmap
+
+Source:
+
+```text
+docs/diagrams/plantuml/geominilm_training_roadmap.puml
+```
+
+Reference rendering:
+
+```text
+docs/diagrams/images/geominilm_training_roadmap.png
+```
+
+Purpose:
+
+Shows the next GeoMiniLM development loop: the explicit priorities of language
+robustness, multi-step GIS composition, and confidence/abstention; scenario
+grouping and grouped holdouts; candidate lock; one-shot frozen production gate;
+deployment eligibility conditions; and the currently blocked Prime deployment
+and dashboard integration states. Geospatial correctness, artifact contracts,
+recovery behavior, and cross-tool routing are modeled as cross-cutting concerns.
 
 ## Exporting PlantUML Images
 
@@ -136,24 +161,35 @@ If a desktop/headless setting is not needed in your environment, this also works
 plantuml -tpng docs/diagrams/plantuml/*.puml -o ../images
 ```
 
-Do not treat missing PlantUML as a project failure. The `.puml` files are the source of truth and can be exported later.
+Do not treat missing PlantUML as a project failure. The `.puml` files are the
+canonical source of truth and can be exported later. PNG files are reference
+renderings generated from those sources.
 
 ## Astah Option
 
 If using Astah instead of PlantUML:
 
-1. Create the UML diagram in Astah.
-2. Export the diagram as PNG.
-3. Save the image under:
+1. Use the matching `.puml` source from `docs/diagrams/plantuml/` as the
+   canonical reference.
+2. Import it if your Astah installation supports PlantUML import, or manually
+   recreate the packages, components, dependencies, actors, databases, and notes.
+3. Export the diagram as PNG.
+4. Save the image under:
 
 ```text
 docs/diagrams/images/
 ```
 
-4. Optionally save the Astah project file under:
+5. Optionally save the Astah project file under:
 
 ```text
 docs/diagrams/astah/
 ```
 
-Do not replace the PlantUML files unless the Astah diagram becomes the source of truth.
+Do not replace the PlantUML files unless the Astah diagram explicitly becomes
+the source of truth.
+
+The GeoMiniLM training roadmap is intentionally written with standard UML
+packages, components, dependencies, actors, databases, and notes so it can be
+used as an Astah recreation reference without relying on PlantUML-only C4
+macros. Automatic round-trip conversion is not assumed.
