@@ -11,6 +11,22 @@ Status labels:
 
 ## Current Priority Queue
 
+### 0. `[DONE]` Run GeoMiniLM Candidate `0bc44b0` Production Gate
+
+Goal: evaluate candidate `0bc44b0` exactly once against the frozen production
+validation set and record the deployment decision without tuning against the
+frozen outcomes.
+
+Result:
+
+* Formal one-shot gate recorded in
+  `docs/GEOMINILM_PRODUCTION_ACCEPTANCE_2026-08-11.md`.
+* Manifest integrity and duplicate/leakage checks passed.
+* Candidate score was `0.6475` versus required value `0.7600`.
+* All-record, category-floor, threshold, and confidence gates failed.
+* Deployment and dashboard integration remain blocked.
+* Frozen validation outcomes must not be used for direct tuning.
+
 ### 1. `[DONE]` Review GeoMiniLM Development-Cycle Contract
 
 Goal: lock the repaired GeoMiniLM development protocol before any new model
