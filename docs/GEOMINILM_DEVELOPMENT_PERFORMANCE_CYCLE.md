@@ -13,8 +13,8 @@
 This cycle used training-derived leave-one-out development evaluation. That
 result is now historical: the repaired protocol uses workflow-only scoring,
 grouped workflow-family holdouts, and treats template code plus retrieval data as
-one versioned candidate. The repaired protocol is implemented and verified,
-pending protocol review before the next performance cycle.
+one versioned candidate. The repaired protocol is implemented, reviewed, and
+recorded; future model selection must use this contract.
 
 ## Monday Development-Cycle Contract Target
 
@@ -39,6 +39,57 @@ Locked protocol for the next cycle:
 - Sealed shadow set: authored and checksum-locked before the gate, hidden from
   development review, disjoint from training and regression records, evaluated
   once per locked candidate, then retired to regression evidence.
+
+Review outcome on 2026-08-11: approved for development use. The frozen
+14-record validation set remains off-limits for model, retrieval, template,
+prompt, scoring-threshold, confidence-threshold, and category-floor tuning.
+Dashboard integration remains blocked until a future locked candidate passes a
+formal one-shot production gate on a new sealed shadow set.
+
+## Grouped Workflow-Family Development Baseline
+
+Command:
+
+```bash
+timeout 120 .venv/bin/python scripts/train_geominilm.py \
+  --dataset data/geominilm/starter_workflows.jsonl \
+  --extra-training-data data/geominilm/training_expansion_workflows.jsonl \
+  --grouped-held-out-eval \
+  --eval-dir outputs/eval/geominilm_grouped_development \
+  --output-dir outputs/models/geominilm_grouped_development \
+  --predictions-dir outputs/model_samples/geominilm_grouped_development
+```
+
+Initial repaired-protocol baseline before development-supported fixes:
+
+- Records: `29`
+- Workflow families: `5`
+- Prediction routes: `workflow_template: 29`
+- Grouped holdout score: `0.9134`
+- Threshold failures: `2`
+- Expected calibration error: `0.5577`
+- Maximum calibration error: `0.5678`
+
+Failure classification:
+
+| Class | Finding | Development-supported action |
+| --- | --- | --- |
+| Retrieval | No direct retrieval-route failures; grouped folds excluded held-out workflow families and every prediction used the template route. Retrieval similarity was still recorded as template confidence. | Preserve family exclusion and record retrieval similarity separately from template confidence. |
+| Template | `report-terrain-summary-010` over-expanded the Markdown report output with source raster paths. | Add a terrain-report template branch that writes only the requested report path. |
+| Template | `train-gis-flood-zonal-summary-023` used broad raster/vector summary wording and combined tools where the development target expects rasterstats then GeoPandas output. | Narrow the flood zonal-summary template to rasterstats class counts and GeoJSON output. |
+| Scoring | The two threshold failures were caused by partial ordered-step/output/tool overlap under workflow-only scoring, not by missing predictions or schema errors. | Fix template wording and output/tool fields rather than changing scorer weights or thresholds. |
+| Confidence | Template predictions used TF-IDF retrieval similarity as confidence, producing severe under-confidence. | Add route-aware `workflow_template_route` confidence and keep `retrieval_similarity` as a separate diagnostic. |
+
+Final grouped development result after development-supported changes:
+
+- Records: `29`
+- Workflow families: `5`
+- Prediction routes: `workflow_template: 29`
+- Grouped holdout score: `0.9287`
+- Threshold failures: `0`
+- Records with findings: `29`
+- Expected calibration error: `0.1010`
+- Maximum calibration error: `0.1010`
 
 ## Preserved Development Baseline
 

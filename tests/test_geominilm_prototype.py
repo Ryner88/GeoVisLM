@@ -67,11 +67,11 @@ def test_leave_one_out_evaluation_excludes_heldout_examples_from_training(tmp_pa
     assert result.comparison["heldout_summary_score"] == round(result.heldout_report.summary_score, 4)
     assert result.comparison["baseline_summary_score"] == 1.0
     assert result.comparison["summary_delta"] < 0.0
-    assert result.comparison["failure_count"] == 1
+    assert result.comparison["failure_count"] == 0
     assert result.comparison["records_with_findings_count"] == len(examples)
     assert result.comparison["confidence_calibration"]["record_count"] == len(examples)
     assert "expected_calibration_error" in result.comparison["confidence_calibration"]
-    assert result.comparison["failed_examples"]
+    assert result.comparison["failed_examples"] == []
     assert result.comparison["records_with_findings"]
     for fold in result.folds:
         assert fold.record_id not in fold.training_record_ids
@@ -108,6 +108,9 @@ def test_grouped_holdout_evaluation_excludes_workflow_families_from_retrieval_ch
     assert result.comparison["prediction_strategy_counts"] == {"workflow_template": 5}
     assert result.comparison["failure_count"] <= result.comparison["records_with_findings_count"]
     for prediction in result.predictions:
+        assert prediction["confidence_source"] == "workflow_template_route"
+        assert "retrieval_similarity" in prediction
+        assert prediction["confidence"] != prediction["retrieval_similarity"]
         assert prediction["id"] not in prediction["fold_training_record_ids"]
         for grouped_id in prediction["heldout_group_record_ids"]:
             assert grouped_id not in prediction["fold_training_record_ids"]
@@ -124,8 +127,8 @@ def test_validation_experiment_uses_disjoint_frozen_validation_set(tmp_path):
     assert result.comparison["trained_validation_score"] >= result.comparison["honest_baseline_score"]
     assert result.comparison["delta_vs_reference_heldout"] > 0.0
     assert result.comparison["validation_record_count"] == 14
-    assert result.comparison["trained_validation_score"] == 0.6377
-    assert result.comparison["failure_count"] == 11
+    assert result.comparison["trained_validation_score"] == 0.6475
+    assert result.comparison["failure_count"] == 10
     assert result.comparison["records_with_findings_count"] == 14
     assert result.comparison["confidence_calibration"]["method"] == "prediction_confidence"
     assert result.comparison["prediction_strategy_counts"] == {"workflow_template": 14}

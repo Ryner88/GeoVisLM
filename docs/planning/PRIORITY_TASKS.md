@@ -11,7 +11,7 @@ Status labels:
 
 ## Current Priority Queue
 
-### 1. `[NEXT]` Review GeoMiniLM Development-Cycle Contract
+### 1. `[DONE]` Review GeoMiniLM Development-Cycle Contract
 
 Goal: lock the repaired GeoMiniLM development protocol before any new model
 selection work begins. The August 8 production candidate failed, and the
@@ -41,6 +41,16 @@ Acceptance criteria:
   protocol migration diagnostics.
 * No model, retrieval, template, or threshold tuning uses the frozen regression
   set.
+
+Result:
+
+* Reviewed and recorded in `docs/GEOMINILM_DEVELOPMENT_PERFORMANCE_CYCLE.md`
+  on 2026-08-11.
+* Grouped workflow-family development baseline ran on the 29 development
+  records only.
+* Development-supported fixes were limited to template routes and route-aware
+  template confidence; the frozen 14-record validation set was not used for
+  tuning.
 
 ### 2. `[TODO-BLOCKED]` Integrate GeoMiniLM Recommendations into the Dashboard
 

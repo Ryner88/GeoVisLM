@@ -125,7 +125,7 @@ class GeoMiniLMPrototype:
             if planned_prediction is not None:
                 planned_prediction["source_checkpoint_record_id"] = nearest["id"]
                 planned_prediction["source_strategy"] = "workflow_template"
-                planned_prediction["confidence"] = round(retrieval_similarity, 4)
+                planned_prediction["retrieval_similarity"] = round(retrieval_similarity, 4)
                 return planned_prediction
         target = json.loads(nearest["target"])
         return {
@@ -591,6 +591,8 @@ def _predict_from_workflow_templates(example: GeoMiniLMExample) -> dict[str, Any
         "inputs": example.inputs,
         "predicted_workflow": workflow,
         "explanation": _template_explanation(example, text),
+        "confidence": _template_confidence(example, text, workflow),
+        "confidence_source": "workflow_template_route",
     }
 
 
@@ -643,10 +645,10 @@ def _gis_workflow(example: GeoMiniLMExample, text: str) -> list[dict[str, Any]] 
             ]
         if _has_any(text, "zonal", "summary", "statistics", "stats"):
             return [
-                _step(1, "Load zones and hazard inputs with CRS metadata.", "geopandas and rasterio", "Aligned source datasets."),
-                _step(2, "Reproject vector zones and raster data to a shared analysis CRS when needed.", "GeoPandas CRS operations", "Comparable layers."),
-                _step(3, "Calculate per-zone flood hazard statistics, class counts, and exposure attributes.", "rasterstats zonal statistics and GeoPandas aggregation", "Zone summary table with flood risk attributes and class counts."),
-                _step(4, "Write the zonal flood summary to the requested output.", "GeoPandas file writer and JSON summary writer", f"{output_path} flood zonal summary GeoJSON JSON table."),
+                _step(1, "Load project zones and the flood risk raster with CRS metadata.", "geopandas and rasterio", "Zone features and flood raster metadata."),
+                _step(2, "Reproject zones to the raster CRS when needed.", "GeoPandas CRS operations", "Zones aligned to the raster grid."),
+                _step(3, "Calculate per-zone flood risk statistics and class counts.", "rasterstats zonal statistics", "Zone summary table with flood attributes."),
+                _step(4, "Write the zonal flood summary to GeoJSON.", "GeoPandas file writer", output_path),
             ]
         return [
             _step(1, "Load hazard zones and project features as vector layers.", "geopandas", "Two GeoDataFrames with CRS metadata."),
@@ -789,6 +791,20 @@ def _reporting_workflow(example: GeoMiniLMExample, text: str) -> list[dict[str, 
     report_path = _output_hint(example, default="requested Markdown report")
     if not _has_any(text, "report", "markdown", "review", "summary", "manifest"):
         return None
+    if _has_any(text, "qgis", "export", "stakeholder", "map") and "report_path" in example.inputs:
+        return [
+            _step(1, "List the QGIS export artifacts included in the report.", "Markdown report generator", "Report inputs section."),
+            _step(2, "Summarize styling, layout elements, and export quality for reviewers.", "GeoVisLM reporting workflow", "Methods and results sections."),
+            _step(3, "Explain how stakeholders should inspect the maps and source layers.", "GeoVisLM documentation links", "Review guidance section."),
+            _step(4, "Write the Markdown report to the requested path.", "Filesystem writer", _first_input(example, "report_path", default=report_path)),
+        ]
+    if _has_any(text, "terrain", "slope", "hillshade", "risk") and "report_path" in example.inputs:
+        return [
+            _step(1, "List the DEM input and generated raster outputs.", "Markdown report generator", "Report inputs section."),
+            _step(2, "Summarize the slope and terrain risk classification method.", "GeoVisLM reporting workflow", "Methods section."),
+            _step(3, "Describe how to inspect the outputs in QGIS and ParaView.", "GeoVisLM documentation links", "Visualization section."),
+            _step(4, "Save the report as Markdown under outputs/reports.", "Filesystem writer", _first_input(example, "report_path", default=report_path)),
+        ]
     return [
         _step(1, "List the geospatial artifacts, QGIS exports, model outputs, or evaluation manifest inputs included in the report.", "Markdown report generator", "Report inputs section with artifact list."),
         _step(2, "Summarize methods, outputs, scores, threshold margin, risk attributes, or export quality for reviewers.", "GeoVisLM reporting workflow", "Methods and results sections with validation score and production decision."),
@@ -816,10 +832,44 @@ def _template_explanation(example: GeoMiniLMExample, text: str) -> str:
             f"For the request {request}, the workflow builds a ParaView terrain render with the requested filter "
             "variant, color map, camera state, screenshot, and state file for reproducible visual review."
         )
+    if _has_any(text, "qgis", "export", "stakeholder", "map") and "report_path" in example.inputs:
+        return (
+            f"For the request {request}, the Markdown report connects QGIS export files to styling, layout, and "
+            "export-quality choices, explains stakeholder map inspection, references source layers, and writes "
+            "the requested report path."
+        )
+    if _has_any(text, "terrain", "slope", "hillshade", "risk") and "report_path" in example.inputs:
+        return (
+            f"For the request {request}, the Markdown report connects the source DEM and generated GIS outputs to "
+            "terrain interpretation, summarizes slope and risk methods, names QGIS and ParaView inspection steps, "
+            "and writes the requested report path for MVP review."
+        )
     return (
         f"For the request {request}, the workflow produces a Markdown review artifact that names inputs, summarizes "
         "results, explains inspection steps, captures decisions, and writes the requested report path."
     )
+
+
+def _template_confidence(example: GeoMiniLMExample, text: str, workflow: list[dict[str, Any]]) -> float:
+    confidence = 0.78
+    output_hint = _output_hint(example, default="")
+    if output_hint and output_hint != "requested output":
+        confidence += 0.06
+    if workflow and any(_template_text_match(output_hint, step.get("output", "")) for step in workflow):
+        confidence += 0.04
+    if example.domain in {"gis", "qgis", "paraview", "reporting"}:
+        confidence += 0.03
+    if _has_any(text, "zonal", "summary", "report", "layout", "atlas", "hillshade", "slope", "wildfire", "flood", "contour"):
+        confidence += 0.04
+    return round(min(confidence, 0.92), 4)
+
+
+def _template_text_match(expected: str, predicted: Any) -> bool:
+    expected_norm = re.sub(r"\s+", " ", str(expected).strip().lower())
+    predicted_norm = re.sub(r"\s+", " ", str(predicted).strip().lower())
+    if not expected_norm or not predicted_norm:
+        return False
+    return expected_norm in predicted_norm or predicted_norm in expected_norm or bool(set(_tokens(expected_norm)) & set(_tokens(predicted_norm)))
 
 
 def _prompt_text(example: GeoMiniLMExample) -> str:

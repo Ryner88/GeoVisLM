@@ -123,13 +123,10 @@ The split validation step checks exact duplicate records, duplicate ids,
 near-duplicate train/validation leakage using a locked Jaccard threshold of
 `0.85` with containment overlap for edited copies, and current dataset/taxonomy
 checksums against the frozen manifest. Calibration reports reliability bins from
-the prediction confidence field. For the current prototype this confidence is
-the TF-IDF retrieval similarity, not the evaluator score.
-
-For predictions routed through `workflow_template`, TF-IDF similarity is only a
-retrieval/routing confidence. It is not a validated confidence estimate for the
-template output itself. Future calibration work should either calibrate by
-prediction route or add a separate template-output confidence signal.
+the prediction confidence field. For predictions routed through
+`workflow_template`, TF-IDF similarity is recorded separately as
+`retrieval_similarity`; template output confidence is reported with
+`confidence_source: workflow_template_route`.
 
 ## Development Model Selection
 
@@ -138,8 +135,8 @@ set is now a regression benchmark because its detailed outcomes have been
 reviewed repeatedly. Future production acceptance requires a new sealed shadow
 set.
 
-The next development-cycle contract must be reviewed before model selection
-resumes. The locked protocol is:
+The development-cycle contract was reviewed on 2026-08-11. The locked protocol
+is:
 
 - Primary score: workflow-only evaluator score.
 - Development split: grouped workflow-family holdouts across starter and
@@ -206,17 +203,18 @@ split.
 The repaired scoring protocol reports the same candidate lower because copied
 request context no longer contributes to the primary score:
 
-- Workflow-only trained validation score: `0.6377`
+- Workflow-only trained validation score: `0.6475`
 - Workflow-only honest baseline score: `0.3682`
-- Failed validation examples: `11/14`
+- Failed validation examples: `10/14`
 - Records with evaluator findings: `14/14`
 - Prediction source strategies: `workflow_template` for `14/14`
 
-Interpret this as a protocol-migration rescore, not a new production acceptance
-attempt. The historical `0.7201` reports remain legacy-scoring gate results. Do
-not reuse the `0.7600` authorization threshold blindly: the metric changed, so
-the next threshold and per-category floors must be locked under workflow-only
-scoring before evaluating a new sealed shadow set.
+Interpret this as a protocol-migration regression diagnostic after
+development-supported template/confidence changes, not a new production
+acceptance attempt or a tuning signal. The historical `0.7201` reports remain
+legacy-scoring gate results. Do not reuse the `0.7600` authorization threshold
+blindly: the metric changed, so the next threshold and per-category floors must
+be locked under workflow-only scoring before evaluating a new sealed shadow set.
 
 Dashboard authorization is now computed only after manifest validation,
 split/leakage validation, all-record pass status, per-category floors, and
