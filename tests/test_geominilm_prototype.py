@@ -116,6 +116,39 @@ def test_grouped_holdout_evaluation_excludes_workflow_families_from_retrieval_ch
             assert grouped_id not in prediction["fold_training_record_ids"]
 
 
+def test_qgis_slope_transparency_template_preserves_hillshade_overlay_details(tmp_path):
+    development_examples = load_geominilm_dataset(STARTER_DATASET) + load_geominilm_dataset(TRAINING_EXPANSION)
+    target = next(example for example in development_examples if example.id == "train-qgis-slope-transparency-016")
+    training_examples = [
+        example
+        for example in development_examples
+        if example.id != target.id and example.domain != "qgis"
+    ]
+
+    checkpoint_path = tmp_path / "checkpoint.json"
+    train_and_save_checkpoint(training_examples, checkpoint_path)
+    prediction = GeoMiniLMPrototype.load(checkpoint_path).predict(target)
+    report = evaluate_records([target.to_record()], [prediction], score_context_fields=False)
+
+    assert prediction["source_strategy"] == "workflow_template"
+    assert prediction["confidence_source"] == "workflow_template_route"
+    assert [step["output"] for step in prediction["predicted_workflow"]] == [
+        "Both layers in the layer panel.",
+        "Hillshade provides terrain context.",
+        "Colored slope overlay.",
+        "Readable combined map view.",
+    ]
+    assert [step["tool"] for step in prediction["predicted_workflow"]] == [
+        "QGIS Browser or Layer menu",
+        "QGIS Layers panel",
+        "QGIS raster styling",
+        "QGIS layer rendering controls",
+    ]
+    assert report.records[0].score > 0.95
+    assert "tool_choice_mismatch" not in report.records[0].findings
+    assert "output_path_mismatch" not in report.records[0].findings
+
+
 def test_validation_experiment_uses_disjoint_frozen_validation_set(tmp_path):
     training_examples = load_geominilm_dataset(STARTER_DATASET) + load_geominilm_dataset(TRAINING_EXPANSION)
     validation_examples = load_geominilm_dataset(VALIDATION_DATASET)

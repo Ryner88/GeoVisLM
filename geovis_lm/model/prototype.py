@@ -733,6 +733,18 @@ def _qgis_workflow(example: GeoMiniLMExample, text: str) -> list[dict[str, Any]]
             _step(3, "Place slope above hillshade with partial transparency.", "QGIS raster styling", "Slope pattern visible over shaded relief."),
             _step(4, "Place terrain risk at the top with categorical colors.", "QGIS paletted renderer", "Risk classes visible for interpretation."),
         ]
+    if (
+        _has_any(text, "slope")
+        and _has_any(text, "hillshade")
+        and "partial opacity" in text
+        and {"base_layer", "overlay_layer", "opacity"}.issubset(example.inputs)
+    ):
+        return [
+            _step(1, "Add the hillshade and slope rasters to the QGIS project.", "QGIS Browser or Layer menu", "Both layers in the layer panel."),
+            _step(2, "Place hillshade below the slope overlay.", "QGIS Layers panel", "Hillshade provides terrain context."),
+            _step(3, "Style slope with the requested color ramp.", "QGIS raster styling", "Colored slope overlay."),
+            _step(4, "Set slope layer opacity to the requested partial transparency.", "QGIS layer rendering controls", "Readable combined map view."),
+        ]
     if _has_any(text, "opacity", "transparent", "transparency", "overlay", "layer"):
         return [
             _step(1, "Add the base and overlay layers to the QGIS project.", "QGIS Browser or Layer menu", "Layers in the layer panel."),
