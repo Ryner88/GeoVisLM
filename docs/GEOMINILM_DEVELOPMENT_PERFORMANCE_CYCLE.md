@@ -230,6 +230,94 @@ timeout 120 .venv/bin/python -m py_compile geovis_lm/model/prototype.py scripts/
 
 Result: passed
 
+## 2026-08-19 Candidate Lock Decision
+
+Decision: lock commit `75818a8` as the GeoMiniLM development candidate.
+
+Locked candidate:
+
+- Full SHA: `75818a88fa0e0589d363ca54c53d443b2b2bd64d`
+- Scope: development-cycle candidate only.
+- This lock does not authorize the frozen production gate, Prime deployment, or
+  dashboard integration.
+
+Preflight:
+
+- `main`, `origin/main`, and the clean worktree all pointed to
+  `75818a88fa0e0589d363ca54c53d443b2b2bd64d` before reproduction.
+- Reproduction used only `data/geominilm/starter_workflows.jsonl` and
+  `data/geominilm/training_expansion_workflows.jsonl`.
+- The frozen regression file `data/geominilm/validation_workflows.jsonl` was not
+  passed to the grouped-development command.
+
+Reproduction command:
+
+```bash
+timeout 120 .venv/bin/python scripts/train_geominilm.py \
+  --dataset data/geominilm/starter_workflows.jsonl \
+  --extra-training-data data/geominilm/training_expansion_workflows.jsonl \
+  --grouped-held-out-eval \
+  --eval-dir outputs/eval/geominilm_grouped_development_20260819_lock_reproduction \
+  --output-dir outputs/models/geominilm_grouped_development_20260819_lock_reproduction \
+  --predictions-dir outputs/model_samples/geominilm_grouped_development_20260819_lock_reproduction
+```
+
+Reproduced lock evidence:
+
+- Score: `0.9354`
+- Failures: `0/29`
+- ECE / MCE: `0.1010` / `0.1010`
+- Route counts: `workflow_template: 29`
+- Confidence source: `workflow_template_route`
+- Confidence range: `0.8100-0.9200`
+- Retrieval similarity diagnostic range: `0.2633-0.5577`
+- Frozen validation id check: no validation ids appeared in reproduced grouped
+  evaluation, comparison, calibration, prediction, or metadata outputs.
+
+Family floors:
+
+| Family | Records | Average | Minimum | Failures |
+| --- | ---: | ---: | ---: | ---: |
+| `reporting_summaries` | `4` | `0.8482` | `0.7616` | `0` |
+| `qgis_styling_and_layout_exports` | `8` | `0.9366` | `0.8086` | `0` |
+| `paraview_render_variants` | `6` | `0.9463` | `0.8803` | `0` |
+| `gis_risk_overlay_and_reclassification` | `7` | `0.9561` | `0.9257` | `0` |
+| `gis_hillshade_and_single_raster_products` | `4` | `0.9680` | `0.9632` | `0` |
+
+Dataset and reproduction artifact hashes:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `data/geominilm/starter_workflows.jsonl` | `a4903f291bcb67460731b18a8433c26b63f54b84ae2a00baaa10acbbd43499e0` |
+| `data/geominilm/training_expansion_workflows.jsonl` | `e15068d596f98bd9308a6a9f42096de6cc34707c3dd593dbe7cc8a32e4afe376` |
+| `data/geominilm/failure_taxonomy.json` | `74f5c87c7d35c692f4bdbb106c731d9485c43629a6f25e8ff7b30fab0605796b` |
+| `outputs/eval/geominilm_grouped_development_20260819_lock_reproduction/evaluation_report.json` | `62c98d737aa678549fb30aee0ed6c5805decbe5605bc2fbaa3c13ab231de524d` |
+| `outputs/eval/geominilm_grouped_development_20260819_lock_reproduction/baseline_comparison.json` | `9232bc0e0bbba37150fc7fa87f725789be816f1e35cea7558bec1abfcbd7ce2d` |
+| `outputs/eval/geominilm_grouped_development_20260819_lock_reproduction/confidence_calibration.json` | `771e02e749327b3b19023bc20cd3ba85573c20fc665502af28b33b1ea3ca152c` |
+| `outputs/model_samples/geominilm_grouped_development_20260819_lock_reproduction/grouped_heldout_predictions.jsonl` | `67f74b3d7010ed8aadcbffb6a43f1d413744bd2f620d7d59c995112ffb8b2e96` |
+| `outputs/models/geominilm_grouped_development_20260819_lock_reproduction/grouped_heldout_metadata.json` | `271773673bbc3e6b5981583038315fc173be15ea7e7f72cc3224e7503a507758` |
+
+Evidence review:
+
+- The isolated development improvement remains
+  `train-qgis-slope-transparency-016`, which moved from `0.7689` to `0.9633`
+  in the 2026-08-17 before/after comparison.
+- The overall grouped-development score improved by `+0.0067`, from `0.9287`
+  to `0.9354`.
+- No other development record changed in the before/after comparison.
+- Remaining lock risk: `reporting_summaries` has the lowest family floor, with
+  `report-terrain-summary-010` at `0.7616`, only `0.0116` above the `0.7500`
+  record threshold. This is a margin risk for future reporting-family
+  generalization, not a lock blocker for this reproduced development candidate.
+
+Verification:
+
+```bash
+timeout 120 .venv/bin/python -m pytest
+```
+
+Result: `80 passed in 15.81s`
+
 ## Preserved Development Baseline
 
 - Protocol: leave-one-out over `data/geominilm/starter_workflows.jsonl` plus `data/geominilm/training_expansion_workflows.jsonl`
