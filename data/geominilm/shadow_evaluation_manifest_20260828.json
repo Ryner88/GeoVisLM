@@ -1,0 +1,108 @@
+{
+  "created_at": "2026-08-28T00:00:00+00:00",
+  "dashboard_integration_rule": "blocked unless trained_validation_score is greater than honest_baseline_score on the frozen expanded validation set and clears the locked threshold margin",
+  "manifest_checksum": "0246bc27748f5c7b3393c93d6370b39445e2202d97958491482667ec95add3c1",
+  "manifest_version": 1,
+  "minimum_threshold_margin": 0.01,
+  "minimum_validation_records": 12,
+  "near_duplicate_threshold": 0.85,
+  "pass_threshold": 0.75,
+  "primary_metric": "trained_validation_score",
+  "split_checksum": "eea0e6c5192f0ca95af467c5ad6eacda3a184ced26b83049bb35c9034a200c4c",
+  "splits": [
+    {
+      "domain_counts": {
+        "gis": 4,
+        "paraview": 3,
+        "qgis": 4,
+        "reporting": 1
+      },
+      "name": "starter",
+      "path": "data/geominilm/starter_workflows.jsonl",
+      "record_count": 12,
+      "record_ids": [
+        "gis-terrain-analysis-001",
+        "gis-slope-only-002",
+        "gis-risk-map-003",
+        "qgis-layer-stack-004",
+        "qgis-risk-styling-005",
+        "qgis-map-export-006",
+        "paraview-render-dem-007",
+        "paraview-vertical-exaggeration-008",
+        "paraview-gui-refinement-009",
+        "report-terrain-summary-010",
+        "workflow-qgis-to-paraview-011",
+        "dataset-authoring-012"
+      ],
+      "role": "training",
+      "sha256": "a4903f291bcb67460731b18a8433c26b63f54b84ae2a00baaa10acbbd43499e0"
+    },
+    {
+      "domain_counts": {
+        "gis": 7,
+        "paraview": 3,
+        "qgis": 4,
+        "reporting": 3
+      },
+      "name": "extra_training_1",
+      "path": "data/geominilm/training_expansion_workflows.jsonl",
+      "record_count": 17,
+      "record_ids": [
+        "train-gis-hillshade-custom-013",
+        "train-gis-flood-vector-014",
+        "train-gis-risk-threshold-update-015",
+        "train-qgis-slope-transparency-016",
+        "train-qgis-pdf-export-017",
+        "train-paraview-contour-overlay-018",
+        "train-report-combined-risk-019",
+        "train-dataset-validation-020",
+        "train-gis-reproject-cog-021",
+        "train-gis-wildfire-screening-022",
+        "train-gis-flood-zonal-summary-023",
+        "train-qgis-atlas-export-024",
+        "train-qgis-vector-labels-025",
+        "train-paraview-slope-colorbar-026",
+        "train-paraview-clip-section-027",
+        "train-report-qgis-review-028",
+        "train-report-evaluation-manifest-029"
+      ],
+      "role": "training",
+      "sha256": "e15068d596f98bd9308a6a9f42096de6cc34707c3dd593dbe7cc8a32e4afe376"
+    },
+    {
+      "domain_counts": {
+        "gis": 5,
+        "paraview": 3,
+        "qgis": 4,
+        "reporting": 3
+      },
+      "name": "expanded_validation",
+      "path": "data/geominilm/shadow_workflows_20260828.jsonl",
+      "record_count": 15,
+      "record_ids": [
+        "shadow-gis-hillshade-nodata-20260828-001",
+        "shadow-gis-slope-degrees-20260828-002",
+        "shadow-gis-risk-thresholds-20260828-003",
+        "shadow-gis-vector-buffer-overlay-20260828-004",
+        "shadow-gis-zonal-risk-table-20260828-005",
+        "shadow-qgis-opacity-stack-20260828-006",
+        "shadow-qgis-layout-png-20260828-007",
+        "shadow-qgis-atlas-png-series-20260828-008",
+        "shadow-qgis-label-buffer-20260828-009",
+        "shadow-paraview-contour-camera-20260828-010",
+        "shadow-paraview-slope-legend-20260828-011",
+        "shadow-paraview-clip-state-20260828-012",
+        "shadow-report-risk-methods-20260828-013",
+        "shadow-report-qgis-delivery-20260828-014",
+        "shadow-report-gate-evidence-20260828-015"
+      ],
+      "role": "validation",
+      "sha256": "bea00f1c9eaf7cf24d2cd10ca3dcd9645cbb207da74fdbaf134da605f1993c6f"
+    }
+  ],
+  "status": "frozen",
+  "taxonomy": {
+    "path": "data/geominilm/shadow_failure_taxonomy_20260828.json",
+    "sha256": "3cb7892940ba8b38b7f0a1aa46c086e465ba91f3a3da6e6b97a587d0c83053f6"
+  }
+}
