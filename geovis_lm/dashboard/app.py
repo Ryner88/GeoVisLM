@@ -42,6 +42,8 @@ from geovis_lm.dashboard.operations import (
     list_projects,
     list_runs,
     list_visible_runs,
+    normalize_workflow_type,
+    resolve_workflow_template,
     mime_type_for_path,
     principal_from_request,
     public_user,
@@ -52,6 +54,7 @@ from geovis_lm.dashboard.operations import (
     run_metadata_path,
     update_report_comment,
     update_run,
+    utc_now,
     valid_vector_inputs,
     write_json,
 )
@@ -61,6 +64,7 @@ from geovis_lm.dashboard.analysis_adapter import (
     execute_flood_analysis,
     execute_wildfire_analysis,
 )
+from geovis_lm.dashboard.recommendations import recommend_workflow
 from geovis_lm.reports.terrain_report import TerrainReportInputs, write_markdown_report
 
 
@@ -695,93 +699,122 @@ def project_for_run(run: dict) -> dict:
 
 
 def run_analysis_workflow(run_id: str) -> dict:
-    metadata = get_run(CONFIG, run_id)
-    dem_path = first_valid_dem(metadata)
-    if not dem_path or not dem_path.exists():
-        return update_run(
-            CONFIG,
-            run_id,
-            status="failed",
-            status_message="No valid DEM input found",
-            error_code="missing_dem",
-            error_message="Upload a valid DEM before analysis",
-            retryable=True,
-        )
+  metadata = get_run(CONFIG, run_id)
+  workflow_type = normalize_workflow_type(metadata.get("workflow_type", "terrain"))
+  template = resolve_workflow_template(workflow_type)
 
-    workflow_type = metadata.get("workflow_type", "terrain")
-    workflow_labels = {
-        "terrain": "Terrain analysis",
-        "flood_risk": "Flood risk analysis",
-        "wildfire_risk": "Wildfire risk analysis",
-    }
-    workflow_label = workflow_labels.get(workflow_type, "Terrain analysis")
-    update_run(CONFIG, run_id, status="running", status_message=f"{workflow_label} started")
-
-    try:
-        vector_paths = valid_vector_inputs(metadata)
-        if workflow_type == "flood_risk":
-            result = execute_flood_analysis(
-                dem_path,
-                maps_dir=run_dir(CONFIG, run_id) / "maps",
-                reports_dir=run_dir(CONFIG, run_id) / "reports",
-                vector_paths=vector_paths,
-                parameters=metadata.get("parameters", {}),
-            )
-        elif workflow_type == "wildfire_risk":
-            result = execute_wildfire_analysis(
-                dem_path,
-                maps_dir=run_dir(CONFIG, run_id) / "maps",
-                reports_dir=run_dir(CONFIG, run_id) / "reports",
-                vector_paths=vector_paths,
-                parameters=metadata.get("parameters", {}),
-            )
-        else:
-            result = execute_dem_analysis(
-                dem_path,
-                maps_dir=run_dir(CONFIG, run_id) / "maps",
-                reports_dir=run_dir(CONFIG, run_id) / "reports",
-                vectors_dir=run_dir(CONFIG, run_id) / "vectors",
-                renders_dir=run_dir(CONFIG, run_id) / "renders",
-                vector_paths=vector_paths,
-                parameters=metadata.get("parameters", {}),
-            )
-    except AnalysisExecutionError as exc:
-        return update_run(
-            CONFIG,
-            run_id,
-            status="failed",
-            status_message=f"{workflow_label} failed",
-            error_code=exc.error_code,
-            error_message=exc.error_message,
-            error_detail=json.dumps(exc.as_detail(), sort_keys=True),
-            retryable=exc.retryable,
-        )
-    except Exception as exc:
-        return update_run(
-            CONFIG,
-            run_id,
-            status="failed",
-            status_message=f"{workflow_label} failed",
-            error_code="dem_analysis_failed",
-            error_message=str(exc),
-            error_detail=repr(exc),
-            retryable=True,
-        )
-
+  recommendation = metadata.get("recommendation")
+  if recommendation and recommendation.get("status") != "approved":
     return update_run(
-        CONFIG,
-        run_id,
-        status="completed",
-        status_message=f"{workflow_label} completed",
-        outputs=result.outputs,
-        crs=result.metadata.get("crs"),
-        execution_adapter=result.adapter,
-        execution_metadata=result.metadata,
-        retryable=False,
-        error_code=None,
-        error_message=None,
-        error_detail=None,
+      CONFIG,
+      run_id,
+      workflow_type=workflow_type,
+      status="failed",
+      status_message="Recommendation approval required",
+      error_code="recommendation_not_approved",
+      error_message="Approve the GeoMiniLM recommendation before execution",
+      retryable=False,
     )
+
+  dem_path = first_valid_dem(metadata)
+  if not dem_path or not dem_path.exists():
+    return update_run(
+      CONFIG,
+      run_id,
+      workflow_type=workflow_type,
+      status="failed",
+      status_message="No valid DEM input found",
+      error_code="missing_dem",
+      error_message="Upload a valid DEM before analysis",
+      retryable=True,
+    )
+
+  workflow_labels = {
+    "terrain": "Terrain analysis",
+    "flood_risk": "Flood risk analysis",
+    "wildfire_risk": "Wildfire risk analysis",
+  }
+  workflow_label = workflow_labels.get(workflow_type, "Terrain analysis")
+  update_run(
+    CONFIG,
+    run_id,
+    workflow_type=workflow_type,
+    status="running",
+    status_message=f"{workflow_label} started",
+  )
+
+  try:
+    vector_paths = valid_vector_inputs(metadata)
+    if workflow_type == "flood_risk":
+      result = execute_flood_analysis(
+        dem_path,
+        maps_dir=run_dir(CONFIG, run_id) / "maps",
+        reports_dir=run_dir(CONFIG, run_id) / "reports",
+        vector_paths=vector_paths,
+        parameters=metadata.get("parameters", {}),
+      )
+    elif workflow_type == "wildfire_risk":
+      result = execute_wildfire_analysis(
+        dem_path,
+        maps_dir=run_dir(CONFIG, run_id) / "maps",
+        reports_dir=run_dir(CONFIG, run_id) / "reports",
+        vector_paths=vector_paths,
+        parameters=metadata.get("parameters", {}),
+      )
+    else:
+      result = execute_dem_analysis(
+        dem_path,
+        maps_dir=run_dir(CONFIG, run_id) / "maps",
+        reports_dir=run_dir(CONFIG, run_id) / "reports",
+        vectors_dir=run_dir(CONFIG, run_id) / "vectors",
+        renders_dir=run_dir(CONFIG, run_id) / "renders",
+        vector_paths=vector_paths,
+        parameters=metadata.get("parameters", {}),
+      )
+  except AnalysisExecutionError as exc:
+    return update_run(
+      CONFIG,
+      run_id,
+      workflow_type=workflow_type,
+      status="failed",
+      status_message=f"{workflow_label} failed",
+      error_code=exc.error_code,
+      error_message=exc.error_message,
+      error_detail=json.dumps(exc.as_detail(), sort_keys=True),
+      retryable=exc.retryable,
+    )
+  except Exception as exc:
+    return update_run(
+      CONFIG,
+      run_id,
+      workflow_type=workflow_type,
+      status="failed",
+      status_message=f"{workflow_label} failed",
+      error_code="dem_analysis_failed",
+      error_message=str(exc),
+      error_detail=repr(exc),
+      retryable=True,
+    )
+
+  result = update_run(
+    CONFIG,
+    run_id,
+    workflow_type=workflow_type,
+    status="completed",
+    status_message=f"{workflow_label} completed",
+    outputs=result.outputs,
+    crs=result.metadata.get("crs"),
+    execution_adapter=result.adapter,
+    execution_metadata=result.metadata,
+    retryable=False,
+    error_code=None,
+    error_message=None,
+    error_detail=None,
+  )
+  result["template_id"] = template["template_id"]
+  result["template_version"] = template["template_version"]
+  result["template"] = template
+  return result
 
 
 @app.get("/healthz")
@@ -981,6 +1014,49 @@ def analyze_run(run_id: str, request: Request) -> dict:
     project = project_for_run(run)
     assert_project_access(CONFIG, project, principal, "analyze")
     return run_analysis_workflow(run_id)
+
+
+@app.post("/api/runs/{run_id}/recommendation")
+def create_run_recommendation(run_id: str, request: Request) -> dict:
+    principal = principal_from_request(request, CONFIG)
+    run = get_run(CONFIG, run_id)
+    project = project_for_run(run)
+    assert_project_access(CONFIG, project, principal, "analyze")
+    recommendation = recommend_workflow(
+        run_id=run_id,
+        workflow_type=run.get("workflow_type", "terrain"),
+        parameters=run.get("parameters", {}),
+        inputs=run.get("inputs", []),
+    )
+    return update_run(CONFIG, run_id, recommendation=recommendation)["recommendation"]
+
+
+@app.get("/api/runs/{run_id}/recommendation")
+def get_run_recommendation(run_id: str, request: Request) -> dict:
+    principal = principal_from_request(request, CONFIG)
+    run = get_run(CONFIG, run_id)
+    project = project_for_run(run)
+    assert_project_access(CONFIG, project, principal, "view")
+    recommendation = run.get("recommendation")
+    if not recommendation:
+        raise HTTPException(status_code=404, detail="Recommendation not found")
+    return recommendation
+
+
+@app.post("/api/runs/{run_id}/recommendation/approve")
+def approve_run_recommendation(run_id: str, request: Request) -> dict:
+    principal = principal_from_request(request, CONFIG)
+    run = get_run(CONFIG, run_id)
+    project = project_for_run(run)
+    assert_project_access(CONFIG, project, principal, "analyze")
+    recommendation = run.get("recommendation")
+    if not recommendation:
+        raise HTTPException(status_code=404, detail="Recommendation not found")
+    if recommendation.get("status") != "pending_approval":
+        raise HTTPException(status_code=400, detail="Recommendation is not pending approval")
+    recommendation = dict(recommendation)
+    recommendation.update({"status": "approved", "approved_by_user_id": principal["user_id"], "approved_at": utc_now()})
+    return update_run(CONFIG, run_id, recommendation=recommendation, workflow_type=recommendation["workflow_type"])
 
 
 @app.post("/api/runs/{run_id}/retry")
@@ -1311,6 +1387,34 @@ def run_page(run_id: str, request: Request) -> str:
       <button>Upload input</button>
     </form>
 """
+    recommendation = run.get("recommendation")
+    recommendation_markup = ""
+    if recommendation:
+      recommendation_actions = ""
+      if recommendation.get("status") == "pending_approval":
+        recommendation_actions = (
+          f"<form method='post' action='/dashboard/runs/{run_id}/recommendation/approve'>"
+          "<button>Approve recommendation</button></form>"
+        )
+      recommendation_markup = f"""
+    <h2>GeoMiniLM Recommendation</h2>
+    <p>Status: <code>{escape(recommendation.get('status') or '')}</code> |
+       Confidence: <code>{escape(str(recommendation.get('confidence', 'n/a')))}</code></p>
+    <p>{escape(recommendation.get('explanation') or '')}</p>
+    <p>Suggested workflow: <code>{escape(recommendation.get('workflow_type') or '')}</code></p>
+    <p>Parameters: <code>{escape(json.dumps(recommendation.get('parameters', {}), sort_keys=True))}</code></p>
+    <pre>{escape(json.dumps(recommendation.get('predicted_workflow', []), indent=2))}</pre>
+    <div><form method='post' action='/dashboard/runs/{run_id}/recommendation'>
+      <button>Refresh recommendation</button></form>{recommendation_actions}</div>
+  """
+    else:
+      recommendation_markup = f"""
+    <h2>GeoMiniLM Recommendation</h2>
+    <p>No recommendation has been generated for this run.</p>
+    <form method='post' action='/dashboard/runs/{run_id}/recommendation'>
+      <button>Generate recommendation</button>
+    </form>
+  """
     return f"""
 <!doctype html>
 <html lang="en">
@@ -1338,6 +1442,7 @@ def run_page(run_id: str, request: Request) -> str:
     <p>Error: {escape(run.get('error_message') or '')}</p>
     <div>{''.join(actions)}</div>
     {upload_form}
+    {recommendation_markup}
     <h2>Inputs</h2>
     <table>
       <thead><tr><th>File</th><th>Status</th><th>Type</th><th>Bytes</th><th>Errors</th></tr></thead>
@@ -1392,6 +1497,18 @@ def cancel_run_form(run_id: str, request: Request) -> HTMLResponse:
 def retry_run_form(run_id: str, request: Request) -> HTMLResponse:
     retry = retry_run(run_id, request)
     return HTMLResponse(f"<meta http-equiv='refresh' content='0; url=/runs/{retry['run_id']}'>")
+
+
+@app.post("/dashboard/runs/{run_id}/recommendation")
+def create_recommendation_form(run_id: str, request: Request) -> HTMLResponse:
+    create_run_recommendation(run_id, request)
+    return HTMLResponse(f"<meta http-equiv='refresh' content='0; url=/runs/{run_id}'>")
+
+
+@app.post("/dashboard/runs/{run_id}/recommendation/approve")
+def approve_recommendation_form(run_id: str, request: Request) -> HTMLResponse:
+    approve_run_recommendation(run_id, request)
+    return HTMLResponse(f"<meta http-equiv='refresh' content='0; url=/runs/{run_id}'>")
 
 
 # Dashboard form conveniences. They intentionally use local-dev identity in

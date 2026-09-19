@@ -101,6 +101,52 @@ def test_authentication_is_required_for_operational_routes(app_module):
     assert bad_token.status_code == 401
 
 
+def test_runs_record_workflow_template_metadata(app_module):
+    operations = sys.modules["geovis_lm.dashboard.operations"]
+    project, run = create_project_and_run(app_module.app)
+    operations.copy_sample_dem_to_run(app_module.CONFIG, run["run_id"], Path("data/sample/sample_dem.tif"))
+
+    result = request(app_module.app, "post", f"/api/runs/{run['run_id']}/analyze", headers=auth())
+    assert result.status_code == 200
+    payload = result.json()
+    assert payload["template_id"] == "terrain-gis-analysis"
+    assert payload["template_version"] == "1.0.0"
+    assert payload["status"] == "completed"
+
+    stored = operations.get_run(app_module.CONFIG, run["run_id"])
+    assert stored["template_id"] == "terrain-gis-analysis"
+    assert stored["template_version"] == "1.0.0"
+
+
+def test_geominilm_recommendation_requires_explicit_approval(app_module):
+    project, run = create_project_and_run(app_module.app)
+
+    recommendation = request(
+        app_module.app,
+        "post",
+        f"/api/runs/{run['run_id']}/recommendation",
+        headers=auth(),
+    )
+    assert recommendation.status_code == 200
+    assert recommendation.json()["status"] == "pending_approval"
+    assert "confidence" in recommendation.json()
+    assert recommendation.json()["predicted_workflow"]
+
+    blocked = request(app_module.app, "post", f"/api/runs/{run['run_id']}/analyze", headers=auth())
+    assert blocked.status_code == 200
+    assert blocked.json()["error_code"] == "recommendation_not_approved"
+
+    approved = request(
+        app_module.app,
+        "post",
+        f"/api/runs/{run['run_id']}/recommendation/approve",
+        headers=auth(),
+    )
+    assert approved.status_code == 200
+    assert approved.json()["recommendation"]["status"] == "approved"
+    assert approved.json()["recommendation"]["approved_by_user_id"] == "user-1"
+
+
 def test_browser_login_session_and_logout_flow(app_module):
     unauthenticated = request(app_module.app, "get", "/", follow_redirects=False)
     assert unauthenticated.status_code == 303

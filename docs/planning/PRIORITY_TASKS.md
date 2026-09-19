@@ -68,25 +68,22 @@ Result:
   template confidence; the frozen 14-record validation set was not used for
   tuning.
 
-### 2. `[TODO-BLOCKED]` Integrate GeoMiniLM Recommendations into the Dashboard
+### 2. `[DONE]` Integrate GeoMiniLM Recommendations into the Dashboard
 
 Goal: generate suggested workflows from uploaded data and present them for user
 approval before execution.
 
-Blocked until:
-
-* The development-cycle contract is reviewed.
-* A new training/development-only performance cycle produces a locked candidate
-  under the repaired protocol.
-* A future formal production gate passes on a new sealed shadow set.
-
-Build when unblocked:
+Implemented:
 
 * Generate suggested workflows from uploaded datasets.
 * Show confidence, parameters, and explanation.
 * Require explicit user approval before executing a recommendation.
 
-### 3. `[TODO]` Add GIS and ParaView Workflow Template Library
+Verified:
+
+* `timeout 300 .venv/bin/python -m pytest -q` (`81 passed`)
+
+### 3. `[DONE]` Add GIS and ParaView Workflow Template Library
 
 Goal: provide reusable, versioned workflow templates for common GIS and
 visualization analyses.
@@ -96,3 +93,15 @@ Build:
 * Add versioned analysis templates.
 * Start with terrain, flood-risk, and wildfire-risk workflows.
 * Track the template and template version that produced each run.
+
+Implemented:
+
+* Added reusable versioned templates for terrain, flood-risk, and wildfire-risk
+  analyses.
+* Persisted `template_id`, `template_version`, and template details in run metadata.
+* Returned the resolved template metadata from completed analysis runs.
+* Preserved the GeoMiniLM recommendation approval gate before execution.
+
+Verified:
+
+* `.venv/bin/python -m pytest tests/test_dashboard_operational.py -q` (`29 passed`)

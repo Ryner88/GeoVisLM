@@ -80,6 +80,81 @@ COMMENT_MARKDOWN_TAGS = {
 }
 COMMENT_MARKDOWN_ATTRIBUTES = {"a": ["href", "title"]}
 
+WORKFLOW_TEMPLATES: dict[str, dict[str, Any]] = {
+    "terrain": {
+        "template_id": "terrain-gis-analysis",
+        "template_version": "1.0.0",
+        "workflow_type": "terrain",
+        "name": "Terrain GIS Analysis",
+        "description": "Load a DEM, compute slope/hillshade/risk layers, and export terrain outputs.",
+        "steps": [
+            "Load the DEM and preserve raster metadata.",
+            "Compute slope, hillshade, and terrain risk layers.",
+            "Write the outputs to the run maps/renders directories.",
+        ],
+    },
+    "flood_risk": {
+        "template_id": "flood-risk-analysis",
+        "template_version": "1.0.0",
+        "workflow_type": "flood_risk",
+        "name": "Flood Risk Analysis",
+        "description": "Assess flood exposure from a DEM and project vector overlays.",
+        "steps": [
+            "Validate the DEM and aligned vector overlays.",
+            "Run flood-risk raster analysis across project zones.",
+            "Summarize exposure outputs and export the report artifact.",
+        ],
+    },
+    "wildfire_risk": {
+        "template_id": "wildfire-risk-analysis",
+        "template_version": "1.0.0",
+        "workflow_type": "wildfire_risk",
+        "name": "Wildfire Risk Analysis",
+        "description": "Combine slope, fuel, and fire exposure layers into wildfire risk outputs.",
+        "steps": [
+            "Validate the DEM, fuel layer, and vector inputs.",
+            "Generate slope and fuel risk factors.",
+            "Combine the layers and write wildfire risk summary outputs.",
+        ],
+    },
+}
+
+
+def normalize_workflow_type(workflow_type: str | None) -> str:
+    if workflow_type is None:
+        return "terrain"
+    key = workflow_type.strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "terrain": "terrain",
+        "terrain_analysis": "terrain",
+        "flood": "flood_risk",
+        "flood_risk": "flood_risk",
+        "flood_risk_analysis": "flood_risk",
+        "wildfire": "wildfire_risk",
+        "wildfire_risk": "wildfire_risk",
+        "wildfire_risk_analysis": "wildfire_risk",
+    }
+    return aliases.get(key, key if key in WORKFLOW_TEMPLATES else "terrain")
+
+
+def resolve_workflow_template(workflow_type: str | None) -> dict[str, Any]:
+    key = normalize_workflow_type(workflow_type)
+    template = WORKFLOW_TEMPLATES.get(key)
+    if template is not None:
+        return dict(template)
+    return {
+        "template_id": f"{key}-analysis",
+        "template_version": "0.0.0",
+        "workflow_type": key,
+        "name": f"{key.replace('_', ' ').title()} Analysis",
+        "description": "Custom workflow template generated for the requested analysis.",
+        "steps": [],
+    }
+
+
+def list_workflow_templates() -> list[dict[str, Any]]:
+    return [dict(template) for template in WORKFLOW_TEMPLATES.values()]
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -680,12 +755,17 @@ def create_run_record(
     base_dir = run_dir(config, run_id)
     create_run_folders(base_dir)
     now = utc_now()
+    workflow_type = normalize_workflow_type(workflow_type)
+    template = resolve_workflow_template(workflow_type)
     metadata = {
         "run_id": run_id,
         "id": run_id,
         "project_id": project["id"],
         "name": name or f"{workflow_type.title()} Run",
         "workflow_type": workflow_type,
+        "template_id": template["template_id"],
+        "template_version": template["template_version"],
+        "template": template,
         "status": "created",
         "created_by_user_id": created_by_user_id,
         "retry_of_run_id": retry_of_run_id,
@@ -813,6 +893,14 @@ def list_visible_runs(config: DashboardConfig, principal: dict[str, str]) -> lis
 def update_run(config: DashboardConfig, run_id: str, status_message: str | None = None, **updates) -> dict[str, Any]:
     metadata = get_run(config, run_id)
     status = updates.get("status")
+    workflow_type = updates.get("workflow_type")
+    if workflow_type is not None:
+        normalized = normalize_workflow_type(workflow_type)
+        template = resolve_workflow_template(normalized)
+        metadata["workflow_type"] = normalized
+        metadata["template_id"] = template["template_id"]
+        metadata["template_version"] = template["template_version"]
+        metadata["template"] = template
     if status and status not in RUN_STATUSES:
         raise HTTPException(status_code=400, detail=f"Invalid run status: {status}")
     now = utc_now()

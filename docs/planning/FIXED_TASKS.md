@@ -8,6 +8,23 @@ Status labels:
 
 ## Completed Work
 
+### `[DONE]` Integrate GeoMiniLM Recommendations into the Dashboard
+
+Implemented:
+
+- Added dashboard recommendation generation backed by the trained GeoMiniLM
+  checkpoint.
+- Persisted workflow type, predicted steps, confidence, parameters, source
+  record, and explanation on each run.
+- Added separate API and browser actions for generating, viewing, and approving
+  recommendations.
+- Blocked recommendation-backed execution until an authenticated user records
+  explicit approval.
+
+Verified:
+
+- `timeout 300 .venv/bin/python -m pytest -q` (`81 passed`)
+
 ### `[DONE]` Add Project Sharing and Report Comments
 
 Implemented project-level collaboration without weakening tenant isolation.
