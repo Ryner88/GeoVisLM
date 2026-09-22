@@ -26,6 +26,8 @@ Completed on Prime on 2026-09-22:
 
 Result: pass. The accepted backup set is
 `/root/geovis-backups/production-drill-20260922T175546Z` on Prime.
+Non-sensitive logs and integrity evidence are versioned under
+`docs/operations/evidence/production-drill-20260922/`.
 
 ### `[DONE]` Add Versioned Workflow Template Registry
 
