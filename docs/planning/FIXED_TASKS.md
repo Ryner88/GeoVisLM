@@ -8,6 +8,25 @@ Status labels:
 
 ## Completed Work
 
+### `[DONE]` Validate Production Backup, Restore, and Retention
+
+Completed on Prime on 2026-09-22:
+
+- Created a custom-format PostGIS dump and compressed retained-output archive.
+- Restored both into uniquely named scratch volumes and containers isolated
+  from the production Compose project and network.
+- Matched database fingerprints and complete output manifests.
+- Parsed and linked restored project, run, job, report, and artifact metadata.
+- Verified six projects, six runs, and 36 registered artifact downloads through
+  a disposable dashboard API mounted against the restored output volume.
+- Recorded backup/restore durations, checksums, retention rules, and cleanup
+  procedure in `docs/operations/BACKUP_RESTORE.md`.
+- Removed all scratch containers and volumes and confirmed production remained
+  ready with unchanged data and runtime fingerprints.
+
+Result: pass. The accepted backup set is
+`/root/geovis-backups/production-drill-20260922T175546Z` on Prime.
+
 ### `[DONE]` Add Versioned Workflow Template Registry
 
 Implemented:

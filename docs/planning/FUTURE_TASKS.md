@@ -14,19 +14,6 @@ Status labels:
 
 ## Future Queue
 
-### 5. `[TODO]` Improve the New Analysis and Batch Upload Experience
-
-Goal: make uploads and analysis setup clearer and more robust for larger
-datasets and multi-file geospatial inputs.
-
-Build when active:
-
-* Support batch datasets and shapefile bundles.
-* Improve validation feedback.
-* Add upload progress.
-* Define quotas.
-* Document cleanup behavior for failed or abandoned uploads.
-
 ### 6. `[TODO]` Add Project Timeline and Collaboration Notifications
 
 Goal: make collaboration activity visible and actionable across projects.
