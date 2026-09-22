@@ -13,6 +13,8 @@ Status labels:
 
 ### 1. `[NEXT]` Improve the New Analysis and Batch Upload Experience
 
+Tracking: GitHub issue `#7`.
+
 Goal: make uploads and analysis setup clearer and more robust for larger
 datasets and multi-file geospatial inputs.
 
@@ -27,6 +29,13 @@ Build:
 ## Active Boundaries
 
 * No task is currently `[IN-PROGRESS]`.
+* Production backup, isolated restore, evidence retention, and cleanup are
+  `[DONE]`; see `docs/planning/FIXED_TASKS.md` and
+  `docs/operations/evidence/production-drill-20260922/`.
+* Encrypted off-host replication is separate high-priority operational work in
+  GitHub issue `#5`.
+* Deploying current `main` and validating the live GeoMiniLM approval boundary
+  is tracked separately in GitHub issue `#8`.
 * The dashboard recommendation feature is implemented, but the current
   GeoMiniLM candidate is not production-approved.
 * Do not tune against the frozen regression set or the retired 2026-08-28

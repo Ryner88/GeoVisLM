@@ -1,0 +1,13 @@
+status=pass
+drill_id=20260922T175546Z
+backup_dir=/root/geovis-backups/production-drill-20260922T175546Z
+production_database_volume=geovis_lm_geovis_postgis
+production_output_volume=geovis_lm_geovis_outputs
+scratch_database_volume=geovis_restore_postgis_20260922T175546Z
+scratch_output_volume=geovis_restore_outputs_20260922T175546Z
+scratch_resources_removed_on_exit=true
+production_state_unchanged=true
+database_fingerprint_match=true
+output_manifest_match=true
+isolated_api_validation=true
+backup_checksums_pass=true

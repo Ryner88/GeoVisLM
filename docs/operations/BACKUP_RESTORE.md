@@ -93,6 +93,10 @@ the scratch volumes.
 
 ## Validated Drill: 2026-09-22
 
+The non-sensitive evidence bundle is versioned under
+[`evidence/production-drill-20260922/`](evidence/production-drill-20260922/).
+Sensitive payloads and detailed manifests remain root-only on Prime.
+
 Prime backup set:
 
 ```text

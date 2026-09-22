@@ -1,0 +1,22 @@
+{
+  "authentication": "pass",
+  "dashboard_public_health_http_status": 200,
+  "database_health": "healthy",
+  "geominilm_explicit_approval": {
+    "deployed_commit": "90c089bad3e2e9656b12d01b19f82dfac8c418e5",
+    "recommendation_http_status": 404,
+    "status": "not_deployed",
+    "tracking_issue": 8
+  },
+  "local_readiness": "ready",
+  "project_sharing": "pass",
+  "report_comments": "pass",
+  "temporary_validation_records_remaining": 0,
+  "worker_health": "healthy",
+  "workflow": {
+    "downloads_verified": 6,
+    "registered_outputs": 6,
+    "status": "completed",
+    "uploaded_files": 2
+  }
+}
