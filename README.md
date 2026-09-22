@@ -37,6 +37,7 @@ The first MVP focuses on terrain analysis:
 - [Priority Tasks](docs/planning/PRIORITY_TASKS.md)
 - [Future Tasks](docs/planning/FUTURE_TASKS.md)
 - [Fixed Tasks](docs/planning/FIXED_TASKS.md)
+- [Production Backup and Restore](docs/operations/BACKUP_RESTORE.md)
 
 Current snapshot (reviewed 2026-09-22): the full local test suite passes
 (`82 passed`), dashboard workflow recommendations are implemented behind an

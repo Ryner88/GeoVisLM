@@ -26,15 +26,16 @@ Feature availability and model production approval are tracked separately.
 | Workflow templates | Implemented | Versioned terrain, flood-risk, and wildfire-risk templates tracked per run |
 | GeoMiniLM dashboard feature | Implemented with approval gate | Recommendations can be generated and must be explicitly approved before execution |
 | GeoMiniLM production candidate | Blocked | Latest gate scored `0.4783`; required `0.7600`; 14/15 threshold failures |
-| Prime deployment | Previously validated | Last documented production sign-off and collaboration deployment checks passed; live state was not revalidated in this status review |
+| Prime deployment | Healthy | Backup/restore drill on 2026-09-22 ended with dashboard, worker, and PostGIS healthy and `/readyz` ready |
+| Production recovery | Validated | PostGIS and 86 retained files restored in isolation; database, manifests, metadata links, and 36 API downloads verified |
 | ParaView | Partial / environment-dependent | Entry point exists, but ParaView is not included in project requirements |
 
 ## Current Priority
 
-`[NEXT]` Add production backup, restore, and retention validation.
+`[NEXT]` Improve the new-analysis and batch-upload experience.
 
-This work must prove that both PostGIS data and retained output files can be
-backed up and restored in isolation without modifying production state.
+This work should improve multi-file datasets and shapefile bundles, validation
+feedback, upload progress, quotas, and abandoned-upload cleanup behavior.
 
 ## GeoMiniLM Boundary
 
@@ -52,12 +53,20 @@ sealed shadow set for its next formal production decision.
 
 ## Near-Term Backlog
 
-1. Production backup, restore, and retention validation.
-2. New analysis and batch-upload experience improvements.
-3. Project timeline and collaboration notifications.
-4. Demo video and portfolio page.
-5. A new GeoMiniLM development cycle followed by a newly sealed production
+1. New analysis and batch-upload experience improvements.
+2. Project timeline and collaboration notifications.
+3. Demo video and portfolio page.
+4. A new GeoMiniLM development cycle followed by a newly sealed production
    gate; this is not yet scheduled as active work.
+
+## Latest Production Recovery Drill
+
+The 2026-09-22 Prime drill passed. The retained backup set is
+`/root/geovis-backups/production-drill-20260922T175546Z`. Total backup time was
+`0.563 s`; isolated restore time was `10.612 s`. Database fingerprints, all 86
+file manifests, 156 metadata references, and 36 API artifact downloads matched.
+Production data and runtime fingerprints were unchanged. See
+`docs/operations/BACKUP_RESTORE.md` for evidence, retention rules, and cleanup.
 
 ## Verification Snapshot
 

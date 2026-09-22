@@ -242,6 +242,10 @@ before changing traffic.
 
 ## Backups
 
+The current backup/restore procedure, retention policy, cleanup rules, and
+latest validated drill are recorded in
+[`BACKUP_RESTORE.md`](BACKUP_RESTORE.md).
+
 Stop writes or use database-consistent tooling. Back up PostGIS with
 `pg_dump`, archive the output volume from a temporary container, and copy the
 root-only `.env` and Caddyfile into restricted storage. Record the deployed Git
@@ -254,6 +258,12 @@ volumes, and directories first. Compare database objects, output content
 digests, and configuration bytes before accepting a backup set. Remove only the
 scratch targets after validation; never overwrite the production volumes as
 part of a drill.
+
+The latest drill passed on `2026-09-22`. It restored PostGIS and all retained
+outputs into isolated scratch volumes, exercised restored projects, runs,
+reports, metadata, and downloads through a disposable dashboard API, and
+confirmed that production data, containers, and volume attachments were
+unchanged.
 
 ## Rollback
 

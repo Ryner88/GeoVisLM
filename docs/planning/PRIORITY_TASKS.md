@@ -11,27 +11,18 @@ Status labels:
 
 ## Current Priority Queue
 
-### 1. `[NEXT]` Add Production Backup, Restore, and Retention Validation
+### 1. `[NEXT]` Improve the New Analysis and Batch Upload Experience
 
-Goal: prove production data can be recovered before additional collaboration
-and AI-assisted workflow activity accumulate more state.
+Goal: make uploads and analysis setup clearer and more robust for larger
+datasets and multi-file geospatial inputs.
 
 Build:
 
-* Test PostGIS backup creation.
-* Test output-volume backup creation.
-* Perform an isolated restore drill covering both PostGIS and retained output
-  files.
-* Define retention and cleanup rules.
-* Document restore steps, expected timing, and verification checks.
-
-Acceptance criteria:
-
-* Backup creation succeeds for PostGIS and retained output files.
-* An isolated restore environment successfully restores both data stores.
-* Restored database records and retained output files are verified end to end.
-* Retention and cleanup rules are documented.
-* Prime production state is not modified during the restore drill.
+* Support batch datasets and shapefile bundles.
+* Improve validation feedback.
+* Add upload progress.
+* Define quotas.
+* Document cleanup behavior for failed or abandoned uploads.
 
 ## Active Boundaries
 
