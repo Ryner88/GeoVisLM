@@ -12,6 +12,9 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from geovis_lm.model.dataset import GeoMiniLMExample
+from geovis_lm.model.prototype import GeoMiniLMPrototype
+
 
 @pytest.fixture()
 def app_module(tmp_path, monkeypatch):
@@ -28,6 +31,25 @@ def app_module(tmp_path, monkeypatch):
     for module_name in ("geovis_lm.dashboard.app", "geovis_lm.dashboard.operations"):
         sys.modules.pop(module_name, None)
     return importlib.import_module("geovis_lm.dashboard.app")
+
+
+@pytest.fixture()
+def geominilm_checkpoint(tmp_path, monkeypatch):
+    checkpoint_path = tmp_path / "geominilm-checkpoint.json"
+    example = GeoMiniLMExample(
+        id="dashboard-test-terrain",
+        domain="gis",
+        instruction="Recommend a terrain workflow for a DEM.",
+        inputs={"files": ["sample_dem.tif"]},
+        expected_workflow=[
+            {"step": 1, "action": "load_dem", "tool": "rasterio"},
+            {"step": 2, "action": "calculate_slope", "tool": "gdal"},
+        ],
+        explanation="Load the DEM and calculate slope.",
+    )
+    GeoMiniLMPrototype.train([example]).save(checkpoint_path)
+    monkeypatch.setenv("GEOVIS_GEOMINILM_CHECKPOINT", str(checkpoint_path))
+    return checkpoint_path
 
 
 def request(app, method: str, url: str, **kwargs):
@@ -118,7 +140,7 @@ def test_runs_record_workflow_template_metadata(app_module):
     assert stored["template_version"] == "1.0.0"
 
 
-def test_geominilm_recommendation_requires_explicit_approval(app_module):
+def test_geominilm_recommendation_requires_explicit_approval(app_module, geominilm_checkpoint):
     project, run = create_project_and_run(app_module.app)
 
     recommendation = request(

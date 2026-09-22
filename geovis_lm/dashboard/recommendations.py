@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+import os
 from pathlib import Path
 from typing import Any
 
@@ -33,8 +34,11 @@ def recommend_workflow(
     workflow_type: str,
     parameters: dict[str, Any],
     inputs: list[dict[str, Any]],
-    checkpoint_path: Path = DEFAULT_CHECKPOINT,
+    checkpoint_path: Path | None = None,
 ) -> dict[str, Any]:
+    resolved_checkpoint = checkpoint_path or Path(
+        os.getenv("GEOVIS_GEOMINILM_CHECKPOINT", str(DEFAULT_CHECKPOINT))
+    )
     filenames = [item.get("stored_filename") or item.get("original_filename") for item in inputs]
     filenames = [name for name in filenames if name]
     instruction = (
@@ -49,12 +53,12 @@ def recommend_workflow(
         expected_workflow=[],
         explanation="",
     )
-    prediction = load_recommendation_model(str(checkpoint_path)).predict(example)
+    prediction = load_recommendation_model(str(resolved_checkpoint)).predict(example)
     predicted_workflow = prediction.get("predicted_workflow", [])
     suggested_workflow_type = _workflow_type(instruction, predicted_workflow)
     return {
         "id": prediction["id"],
-        "model_name": load_recommendation_model(str(checkpoint_path)).model_name,
+        "model_name": load_recommendation_model(str(resolved_checkpoint)).model_name,
         "workflow_type": suggested_workflow_type,
         "parameters": dict(parameters),
         "predicted_workflow": predicted_workflow,
