@@ -1,3 +1,9 @@
+# Legacy Fixed-Task Summary
+
+The canonical completed-work log is now
+`docs/planning/FIXED_TASKS.md`. This file retains the original deployment
+summary for historical compatibility.
+
 [DONE] Former GeoVis deployment retirement
 - Removed the former GeoVis containers and old Caddy route from the old VPS on 2026-07-14 UTC.
 - Preserved the former PostGIS and output volumes for rollback retention.

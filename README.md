@@ -33,9 +33,15 @@ The first MVP focuses on terrain analysis:
 
 ## Project Tracking
 
+- [Current Project Status](STATUS.md)
 - [Priority Tasks](docs/planning/PRIORITY_TASKS.md)
 - [Future Tasks](docs/planning/FUTURE_TASKS.md)
 - [Fixed Tasks](docs/planning/FIXED_TASKS.md)
+
+Current snapshot (reviewed 2026-09-22): the full local test suite passes
+(`82 passed`), dashboard workflow recommendations are implemented behind an
+explicit approval step, and the current GeoMiniLM candidate remains blocked
+from production approval after failing its latest sealed shadow-set gate.
 
 ## UML Diagrams
 

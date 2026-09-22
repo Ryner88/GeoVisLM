@@ -100,7 +100,10 @@ docs/diagrams/images/geominilm_workflow.png
 
 Purpose:
 
-Shows GeoMiniLM prototype inference as TF-IDF retrieval plus handwritten template fallback, with dashboard integration explicitly blocked until a future production gate passes.
+Shows GeoMiniLM prototype inference as TF-IDF retrieval plus handwritten
+template fallback. The recommendation UI is integrated behind explicit user
+approval, while production authorization for the current model candidate
+remains blocked until a future production gate passes.
 
 ---
 

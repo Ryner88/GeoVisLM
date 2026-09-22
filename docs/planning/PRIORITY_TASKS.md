@@ -11,97 +11,32 @@ Status labels:
 
 ## Current Priority Queue
 
-### 0. `[DONE]` Run GeoMiniLM Candidate `0bc44b0` Production Gate
+### 1. `[NEXT]` Add Production Backup, Restore, and Retention Validation
 
-Goal: evaluate candidate `0bc44b0` exactly once against the frozen production
-validation set and record the deployment decision without tuning against the
-frozen outcomes.
-
-Result:
-
-* Formal one-shot gate recorded in
-  `docs/GEOMINILM_PRODUCTION_ACCEPTANCE_2026-08-11.md`.
-* Manifest integrity and duplicate/leakage checks passed.
-* Candidate score was `0.6475` versus required value `0.7600`.
-* All-record, category-floor, threshold, and confidence gates failed.
-* Deployment and dashboard integration remain blocked.
-* Frozen validation outcomes must not be used for direct tuning.
-
-### 1. `[DONE]` Review GeoMiniLM Development-Cycle Contract
-
-Goal: lock the repaired GeoMiniLM development protocol before any new model
-selection work begins. The August 8 production candidate failed, and the
-14-record validation set is now a frozen regression benchmark, not a tuning set
-or active production-evaluation target.
+Goal: prove production data can be recovered before additional collaboration
+and AI-assisted workflow activity accumulate more state.
 
 Build:
 
-* Review and approve workflow-only primary scoring.
-* Use grouped workflow-family holdouts for development model selection.
-* Lock per-category score floors before evaluating any future candidate.
-* Require every evaluated record to pass.
-* Require semantic and executability checks for predicted workflows.
-* Require route-aware confidence checks for retrieval and template predictions.
-* Define sealed shadow-set authoring, custody, one-shot use, and retirement
-  rules.
-* Explicitly prohibit model or template tuning against
-  `data/geominilm/validation_workflows.jsonl`.
+* Test PostGIS backup creation.
+* Test output-volume backup creation.
+* Perform an isolated restore drill covering both PostGIS and retained output
+  files.
+* Define retention and cleanup rules.
+* Document restore steps, expected timing, and verification checks.
 
 Acceptance criteria:
 
-* Development-cycle contract is reviewed and recorded.
-* Workflow-only score, per-category floors, all-record pass requirement,
-  semantic checks, executability checks, route-aware confidence requirements,
-  and sealed shadow-set rules are locked before model selection resumes.
-* The frozen 14-record validation set is used only for regression reporting and
-  protocol migration diagnostics.
-* No model, retrieval, template, or threshold tuning uses the frozen regression
-  set.
+* Backup creation succeeds for PostGIS and retained output files.
+* An isolated restore environment successfully restores both data stores.
+* Restored database records and retained output files are verified end to end.
+* Retention and cleanup rules are documented.
+* Prime production state is not modified during the restore drill.
 
-Result:
+## Active Boundaries
 
-* Reviewed and recorded in `docs/GEOMINILM_DEVELOPMENT_PERFORMANCE_CYCLE.md`
-  on 2026-08-11.
-* Grouped workflow-family development baseline ran on the 29 development
-  records only.
-* Development-supported fixes were limited to template routes and route-aware
-  template confidence; the frozen 14-record validation set was not used for
-  tuning.
-
-### 2. `[DONE]` Integrate GeoMiniLM Recommendations into the Dashboard
-
-Goal: generate suggested workflows from uploaded data and present them for user
-approval before execution.
-
-Implemented:
-
-* Generate suggested workflows from uploaded datasets.
-* Show confidence, parameters, and explanation.
-* Require explicit user approval before executing a recommendation.
-
-Verified:
-
-* `timeout 300 .venv/bin/python -m pytest -q` (`81 passed`)
-
-### 3. `[DONE]` Add GIS and ParaView Workflow Template Library
-
-Goal: provide reusable, versioned workflow templates for common GIS and
-visualization analyses.
-
-Build:
-
-* Add versioned analysis templates.
-* Start with terrain, flood-risk, and wildfire-risk workflows.
-* Track the template and template version that produced each run.
-
-Implemented:
-
-* Added reusable versioned templates for terrain, flood-risk, and wildfire-risk
-  analyses.
-* Persisted `template_id`, `template_version`, and template details in run metadata.
-* Returned the resolved template metadata from completed analysis runs.
-* Preserved the GeoMiniLM recommendation approval gate before execution.
-
-Verified:
-
-* `.venv/bin/python -m pytest tests/test_dashboard_operational.py -q` (`29 passed`)
+* No task is currently `[IN-PROGRESS]`.
+* The dashboard recommendation feature is implemented, but the current
+  GeoMiniLM candidate is not production-approved.
+* Do not tune against the frozen regression set or the retired 2026-08-28
+  shadow set. A later formal decision requires a new sealed shadow set.

@@ -4,9 +4,11 @@
 
 Result: **FAIL**.
 
-Dashboard integration remains blocked. The shadow set is now retired as
-regression evidence and must not be used for model, retrieval, template,
-prompt, threshold, confidence, or category-floor tuning.
+The candidate is not authorized for production-backed dashboard recommendations.
+The dashboard recommendation and approval workflow was integrated later, but
+that feature integration does not override this model decision. The shadow set
+is now retired as regression evidence and must not be used for model,
+retrieval, template, prompt, threshold, confidence, or category-floor tuning.
 
 ## Candidate
 
@@ -23,7 +25,7 @@ The locked development evidence still stands:
 
 - Grouped-development score: `0.9354`
 - Grouped-development failures: `0/29`
-- Dashboard integration before this gate: blocked
+- Production-backed dashboard authorization before this gate: blocked
 
 ## Shadow Set
 
@@ -128,7 +130,7 @@ the all-record pass rule, category floors, or confidence limits.
 | Category floor | fail |
 | Confidence gate | fail |
 
-Dashboard integration allowed: `false`.
+Candidate authorized for production-backed dashboard use: `false`.
 
 ## Artifact Hashes
 

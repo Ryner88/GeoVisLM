@@ -8,7 +8,8 @@
 - Failed production candidate: `9af23d8`
 - Frozen 14-record regression split: off-limits for development selection and
   tuning
-- Dashboard integration: blocked until a future formal production gate passes
+- Candidate production authorization: blocked until a future formal production
+  gate passes
 
 This cycle used training-derived leave-one-out development evaluation. That
 result is now historical: the repaired protocol uses workflow-only scoring,
@@ -43,8 +44,10 @@ Locked protocol for the next cycle:
 Review outcome on 2026-08-11: approved for development use. The frozen
 14-record validation set remains off-limits for model, retrieval, template,
 prompt, scoring-threshold, confidence-threshold, and category-floor tuning.
-Dashboard integration remains blocked until a future locked candidate passes a
-formal one-shot production gate on a new sealed shadow set.
+The dashboard recommendation feature was subsequently integrated behind an
+explicit user-approval step. This development contract does not authorize its
+current candidate for production use; that remains blocked until a future
+locked candidate passes a formal one-shot gate on a new sealed shadow set.
 
 ## Grouped Workflow-Family Development Baseline
 
@@ -392,7 +395,8 @@ Result: `77 passed in 14.97s`
 
 - Locked candidate evaluated: `9af23d8`
 - Lock basis: training-derived development result plus passing full regression suite
-- Production status: `9af23d8` was not accepted; dashboard integration remains blocked
+- Production status: `9af23d8` was not accepted; candidate production
+  authorization remains blocked
 - Legacy candidate rescore under repaired workflow-only scoring: `0.6377`
 - Comparable honest baseline under repaired workflow-only scoring: `0.3682`
 - Repaired-protocol failures on the historical frozen set: `11/14`

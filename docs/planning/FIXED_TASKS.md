@@ -8,6 +8,41 @@ Status labels:
 
 ## Completed Work
 
+### `[DONE]` Add Versioned Workflow Template Registry
+
+Implemented:
+
+- Extended the earlier template-ready metadata foundation with reusable,
+  versioned terrain, flood-risk, and wildfire-risk templates.
+- Persisted template identifiers, versions, and details in run metadata.
+- Returned resolved template metadata from completed analysis runs.
+- Preserved explicit recommendation approval before execution.
+
+Verified:
+
+- `.venv/bin/python -m pytest tests/test_dashboard_operational.py -q`
+  (`29 passed`)
+
+### `[DONE]` Complete the 2026-08 GeoMiniLM Development and Gate Cycle
+
+Implemented and recorded:
+
+- Locked the workflow-only scoring and grouped-development protocol.
+- Kept the frozen 14-record regression set out of tuning.
+- Evaluated a locked candidate once against a newly sealed 15-record shadow
+  set on 2026-08-28.
+- Retired the shadow set after the formal decision.
+
+Result:
+
+- Development score: `0.9354` with `0/29` failures.
+- Production shadow score: `0.4783` versus `0.7600` required.
+- Production threshold failures: `14/15`.
+- Production decision: failed; current candidate is not approved.
+
+See `docs/GEOMINILM_PRODUCTION_ACCEPTANCE_2026-08-28.md` for the complete
+evidence record.
+
 ### `[DONE]` Integrate GeoMiniLM Recommendations into the Dashboard
 
 Implemented:
@@ -23,7 +58,8 @@ Implemented:
 
 Verified:
 
-- `timeout 300 .venv/bin/python -m pytest -q` (`81 passed`)
+- Initially verified with `81 passed`; current full-suite verification on
+  2026-09-22 is `82 passed`.
 
 ### `[DONE]` Add Project Sharing and Report Comments
 

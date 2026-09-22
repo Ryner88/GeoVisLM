@@ -220,18 +220,22 @@ Dashboard authorization is now computed only after manifest validation,
 split/leakage validation, all-record pass status, per-category floors, and
 confidence checks are attached to the production decision.
 
-Current regression-set status from the `2026-08-08` production gate:
+Current production status from the latest sealed shadow-set gate on
+`2026-08-28`:
 
-- Status: production evaluation framework implemented; expanded production
-  acceptance gate not passed.
-- Trained validation score: `0.7201`
-- Honest baseline score: `0.5326`
-- Delta vs honest baseline: `+0.1875`
-- Required metric for dashboard authorization: `0.76`
-- Remaining gap: `0.0399`
-- Failed validation examples: `9/14`
-- Expected calibration error: `0.4368`
-- Dashboard integration: blocked
+- Status: production evaluation framework implemented; candidate not approved.
+- Trained shadow score: `0.4783`
+- Honest baseline score: `0.3368`
+- Delta vs honest baseline: `+0.1415`
+- Required metric for production authorization: `0.7600`
+- Threshold failures: `14/15`
+- Expected calibration error: `0.8302`
+- Dashboard feature integration: implemented behind explicit user approval.
+- Candidate production authorization: blocked.
+
+The frozen regression set and retired 2026-08-28 shadow set remain evidence,
+not tuning inputs. See `GEOMINILM_PRODUCTION_ACCEPTANCE_2026-08-28.md` for the
+formal decision.
 
 ## Baseline Validation
 
