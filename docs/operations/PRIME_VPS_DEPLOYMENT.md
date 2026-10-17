@@ -16,7 +16,9 @@ volumes remain preserved for rollback retention.
 - Caddy configuration: `/etc/caddy/Caddyfile`
 - Pre-import backups: `/root/geovis-backups/`
 - Prime public IPv4: `192.3.31.132`
-- Production hostname: `geovis.nextgenbytes.me`
+- Production hostname: `geovislm.cloud`
+- Transition alias: `geovis.nextgenbytes.me` (retained in Caddy; its DNS record
+  must remain present for public access)
 
 The production environment requires `POSTGRES_PASSWORD`,
 `GEOVIS_AUTH_TOKEN`, and `GEOVIS_SESSION_SECRET`. It also sets
@@ -109,10 +111,13 @@ Do not remove `geovis_lm_geovis_postgis`, pass `--volumes`, or delete an active
 database container until its mount has been confirmed. After recovery, run the
 repeated-redeploy verifier and the worker persistence smoke test.
 
-## Caddy and Cloudflare origin TLS
+## Caddy and Cloudflare TLS
 
-The site proxies `geovis.nextgenbytes.me` to `127.0.0.1:8000`. Cloudflare uses
-Full (strict) mode and Caddy uses the matching Cloudflare Origin CA pair:
+The primary site `geovislm.cloud` and transition alias
+`geovis.nextgenbytes.me` proxy to `127.0.0.1:8000`. Cloudflare uses Full
+(strict) mode. Caddy obtains and renews a publicly trusted certificate for
+`geovislm.cloud`; the transition alias continues to use its matching
+Cloudflare Origin CA pair:
 
 - Certificate: `/etc/caddy/certs/geovis-origin.pem`, mode `0640`, `root:caddy`
 - Private key: `/etc/caddy/certs/geovis-origin-key.pem`, mode `0640`, `root:caddy`
@@ -121,6 +126,8 @@ Full (strict) mode and Caddy uses the matching Cloudflare Origin CA pair:
 Never copy either TLS file into Git or output its contents. The pre-Origin-CA
 Caddy backup is
 `/root/geovis-backups/Caddyfile.before-origin-ca.20260711T013456Z`.
+The pre-hostname-migration backup is
+`/root/geovis-backups/Caddyfile.before-geovislm-cloud.20261016T192403Z`.
 Validate before every reload:
 
 ```bash
@@ -128,6 +135,28 @@ caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 systemctl reload caddy
 journalctl -u caddy --since "15 minutes ago" --no-pager
 ```
+
+The Cloudflare DNS record for the apex `geovislm.cloud` must be a proxied `A`
+record targeting Prime at `192.3.31.132`. Keep the previous hostname's record
+while it remains a transition alias. No application-level allowed-host, CORS,
+or OAuth callback configuration is currently implemented; first-party login
+uses relative redirects and therefore follows the request hostname.
+
+For initial public-certificate issuance, temporarily set the `geovislm.cloud`
+apex record to **DNS only**. Confirm `https://geovislm.cloud/readyz` succeeds
+directly, then restore the record to **Proxied**. Cloudflare's proxy currently
+intercepts the ACME HTTP challenge and cannot forward the ACME TLS-ALPN
+challenge. As an alternative, install a Cloudflare Origin CA certificate whose
+SAN covers `geovislm.cloud` and reference it in the site's Caddy block.
+
+### 2026-10-17 hostname migration validation
+
+The `geovislm.cloud` apex was briefly set to DNS-only so Caddy could complete
+ACME validation, then returned to Cloudflare proxying. Direct-origin HTTPS
+presented a trusted Let's Encrypt certificate for `geovislm.cloud`. Public
+`GET /healthz`, `GET /readyz`, and `GET /login?next=/` all returned HTTP 200;
+readiness confirmed storage, PostGIS, and required authentication were ready.
+The transition alias remains in Caddy with its Cloudflare Origin CA certificate.
 
 ## Public validation record
 

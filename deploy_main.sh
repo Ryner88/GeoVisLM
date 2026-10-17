@@ -9,7 +9,7 @@ source_branch="${1:-${current_branch:-main}}"
 target_branch="${2:-main}"
 website_command="${GEOVIS_DEPLOY_WEBSITE_COMMAND:-}"
 local_deploy_command="${GEOVIS_DEPLOY_LOCAL_COMMAND:-sudo ./deploy_runbook.sh --skip-pull --cache}"
-verify_command="${GEOVIS_DEPLOY_VERIFY_COMMAND:-curl -fsS https://geovis.nextgenbytes.me/readyz}"
+verify_command="${GEOVIS_DEPLOY_VERIFY_COMMAND:-curl -fsS https://geovislm.cloud/readyz}"
 
 if ! git rev-parse --verify "$source_branch" >/dev/null 2>&1; then
   echo "Source branch '$source_branch' does not exist locally." >&2

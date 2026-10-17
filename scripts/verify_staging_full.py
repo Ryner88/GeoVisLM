@@ -38,13 +38,13 @@ def parse_args():
     parser.add_argument(
         "--domain",
         default=None,
-        help="Hostname or URL to verify (defaults to VERIFY_DOMAIN, DOMAIN, or https://geovis.nextgenbytes.me)",
+        help="Hostname or URL to verify (defaults to VERIFY_DOMAIN, DOMAIN, or https://geovislm.cloud)",
     )
     return parser.parse_args()
 
 
 def get_domain(cli_domain):
-    return cli_domain or os.environ.get("VERIFY_DOMAIN") or os.environ.get("DOMAIN") or "https://geovis.nextgenbytes.me"
+    return cli_domain or os.environ.get("VERIFY_DOMAIN") or os.environ.get("DOMAIN") or "https://geovislm.cloud"
 
 
 def find_and_fill(page, selectors, value):

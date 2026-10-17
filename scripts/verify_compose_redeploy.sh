@@ -10,7 +10,7 @@ cd "$PROJECT_ROOT"
 
 ATTEMPTS="${REDEPLOY_ATTEMPTS:-2}"
 DEPLOY_COMMAND="${DEPLOY_COMMAND:-./deploy_runbook.sh --skip-pull --cache}"
-PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-https://geovis.nextgenbytes.me}"
+PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-https://geovislm.cloud}"
 
 if ! [[ "$ATTEMPTS" =~ ^[1-9][0-9]*$ ]]; then
   echo "REDEPLOY_ATTEMPTS must be a positive integer." >&2

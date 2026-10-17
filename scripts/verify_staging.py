@@ -27,7 +27,7 @@ def parse_args():
         "domain",
         nargs="?",
         default=None,
-        help="Hostname to verify (defaults to VERIFY_DOMAIN, DOMAIN, or geovis.nextgenbytes.me)",
+        help="Hostname to verify (defaults to VERIFY_DOMAIN, DOMAIN, or geovislm.cloud)",
     )
     parser.add_argument(
         "--domain",
@@ -39,7 +39,7 @@ def parse_args():
 
 
 def get_domain(cli_domain):
-    return cli_domain or os.environ.get("VERIFY_DOMAIN") or os.environ.get("DOMAIN") or "geovis.nextgenbytes.me"
+    return cli_domain or os.environ.get("VERIFY_DOMAIN") or os.environ.get("DOMAIN") or "geovislm.cloud"
 
 
 def resolve(host):

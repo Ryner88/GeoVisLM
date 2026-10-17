@@ -13,6 +13,7 @@ GIT_REMOTE="${GIT_REMOTE:-origin}"
 GIT_BRANCH="${GIT_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
 APP_IMAGE="geovis_lm_app:latest"
 DEPLOY_WAIT_TIMEOUT="${DEPLOY_WAIT_TIMEOUT:-120}"
+PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-https://geovislm.cloud}"
 
 if [[ "$NO_CACHE" =~ ^(1|true|yes)$ ]]; then
   NO_CACHE=1
@@ -151,8 +152,8 @@ echo "Current containers"
 "${COMPOSE_CMD[@]}" ps
 
 echo "Verify public endpoints"
-curl -fsS "https://geovis.nextgenbytes.me/readyz"
+curl -fsS "${PUBLIC_BASE_URL}/readyz"
 echo
-curl -fsS "https://geovis.nextgenbytes.me/login?next=/" | grep -E "Welcome back|Access token"
+curl -fsS "${PUBLIC_BASE_URL}/login?next=/" | grep -E "Welcome back|Access token"
 
 echo "Redeploy finished"
