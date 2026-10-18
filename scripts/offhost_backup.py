@@ -399,8 +399,12 @@ def parse_retention_inventory(
         if not name_value.startswith(expected_parent):
             raise BackupError("B2 inventory escaped the configured bucket prefix")
         relative = name_value.removeprefix(expected_parent)
-        if not relative or "/" in relative:
-            raise BackupError("B2 retention prefix contains an unexpected nested object")
+        if not relative:
+            raise BackupError("B2 retention prefix contains an empty object name")
+        if "/" in relative:
+            # B2 recursively lists child prefixes. A production retention run
+            # must leave an isolated canary beneath that prefix untouched.
+            continue
         if action_value != "upload":
             raise BackupError(f"B2 object has an unsupported version action: {relative}")
         versions.setdefault(name_value, []).append(
@@ -458,6 +462,13 @@ def eligible_pair_names(
     days: int,
     minimum: int,
 ) -> list[str]:
+    future = [
+        name
+        for name, pair in pairs.items()
+        if pair["timestamp"] > now + timedelta(minutes=5)
+    ]
+    if future:
+        raise BackupError("retention inventory has a future-dated backup: " + ", ".join(sorted(future)))
     ordered = sorted(
         pairs,
         key=lambda name: pairs[name]["timestamp"],
@@ -470,6 +481,23 @@ def eligible_pair_names(
         for name in reversed(ordered)
         if name not in protected and pairs[name]["timestamp"] < cutoff
     ]
+
+
+def retention_deletions(
+    object_names: Iterable[str], *, now: datetime, days: int, minimum: int
+) -> list[str]:
+    """Select names for local disposable-fixture preparation."""
+    stamps: dict[datetime, str] = {}
+    for name in object_names:
+        match = OBJECT_NAME.fullmatch(name)
+        if match:
+            stamp = datetime.strptime(match.group(2), "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+            if stamp > now + timedelta(minutes=5):
+                raise BackupError(f"retention inventory has a future-dated backup: {name}")
+            stamps[stamp] = name
+    newest = set(sorted(stamps, reverse=True)[:minimum])
+    cutoff = now - timedelta(days=days)
+    return [stamps[stamp] for stamp in sorted(stamps) if stamp < cutoff and stamp not in newest]
 
 
 def inventory_version_map(
@@ -496,7 +524,18 @@ def write_retention_record(
     ):
         raise BackupError("retention state directory must be an absolute non-symlink path")
     state_dir = configured_state_dir.resolve()
+    created_directories: list[Path] = []
+    ancestor = state_dir
+    while not ancestor.exists():
+        created_directories.append(ancestor)
+        ancestor = ancestor.parent
     state_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
+    for created in reversed(created_directories):
+        parent_descriptor = os.open(created.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(parent_descriptor)
+        finally:
+            os.close(parent_descriptor)
     if state_dir.stat().st_uid != os.geteuid():
         raise BackupError("retention state directory must be owned by the operator")
     state_dir.chmod(0o700)
@@ -506,13 +545,32 @@ def write_retention_record(
             raise BackupError("recovery record is outside the configured state directory")
     else:
         pair_name = Path(str(record["pair_name"])).name
-        destination = state_dir / f"retention-{pair_name}.json"
+        scope = hashlib.sha256(f"{config.bucket}/{config.prefix}".encode()).hexdigest()[:12]
+        destination = state_dir / f"retention-{scope}-{pair_name}.json"
+        if destination.exists():
+            raise BackupError("retention recovery record already exists; review it before another apply")
     temporary = destination.with_suffix(destination.suffix + ".tmp")
-    with temporary.open("w", encoding="utf-8") as handle:
-        json.dump(record, handle, indent=2, sort_keys=True)
-        handle.write("\n")
-    temporary.chmod(0o600)
-    temporary.replace(destination)
+    descriptor = os.open(
+        temporary,
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            os.fchmod(handle.fileno(), 0o600)
+            json.dump(record, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, destination)
+        directory_descriptor = os.open(state_dir, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
     return destination
 
 
@@ -530,6 +588,29 @@ def load_retention_record(config: Config, path: Path) -> dict[str, object]:
     if record.get("bucket") != config.bucket or record.get("prefix") != config.prefix:
         raise BackupError("recovery record bucket or prefix does not match configuration")
     return record
+
+
+def reject_pending_retention_records(config: Config) -> None:
+    state_dir = config.retention_state_dir
+    if not state_dir.exists():
+        return
+    if state_dir.is_symlink() or not state_dir.is_dir():
+        raise BackupError("retention state directory is unsafe")
+    for path in state_dir.glob("retention-*.json"):
+        if path.is_symlink() or not path.is_file():
+            raise BackupError("retention state directory contains an unsafe record")
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            raise BackupError("retention state directory contains an unreadable record") from error
+        if not isinstance(record, dict):
+            raise BackupError("retention state directory contains an invalid record")
+        if (
+            record.get("bucket") == config.bucket
+            and record.get("prefix") == config.prefix
+            and record.get("status") != "complete"
+        ):
+            raise BackupError(f"pending retention recovery blocks unrelated deletion: {path}")
 
 
 def verify_protected_versions(
@@ -554,7 +635,7 @@ def delete_version(config: Config, version: dict[str, str]) -> tuple[bool, str |
             f"b2id://{version['file_id']}",
         )
         return True, None
-    except BackupError as error:
+    except (BackupError, OSError, subprocess.SubprocessError) as error:
         return False, str(error)
 
 
@@ -565,7 +646,10 @@ def execute_pair_deletion(
     protected: dict[str, str],
     *,
     recovery_path: Path | None = None,
+    skip_absent: set[str] | None = None,
 ) -> dict[str, object]:
+    skip_absent = skip_absent or set()
+    prior_record = load_retention_record(config, recovery_path) if recovery_path else None
     results: dict[str, dict[str, object]] = {}
     for component in ("ciphertext", "checksum"):
         version = expected_pair[component]
@@ -576,6 +660,7 @@ def execute_pair_deletion(
             "delete_command_succeeded": None,
             "error": None,
             "absent_after": False,
+            "skipped_as_absent": component in skip_absent,
         }
 
     record: dict[str, object] = {
@@ -590,9 +675,19 @@ def execute_pair_deletion(
         "components": results,
         "protected_versions": protected,
         "status": "prepared",
+        "attempt_history": (
+            [*prior_record.get("attempt_history", []), {
+                "checked_at": prior_record.get("checked_at"),
+                "status": prior_record.get("status"),
+                "components": prior_record.get("components"),
+            }]
+            if prior_record else []
+        ),
     }
     record_path = write_retention_record(config, record, existing=recovery_path)
     for component in ("ciphertext", "checksum"):
+        if component in skip_absent:
+            continue
         version = expected_pair[component]
         assert isinstance(version, dict)
         command_succeeded, error = delete_version(config, version)
@@ -601,6 +696,8 @@ def execute_pair_deletion(
         record["status"] = "deletion_in_progress"
         record["checked_at"] = datetime.now(timezone.utc).isoformat()
         write_retention_record(config, record, existing=record_path)
+        if not command_succeeded:
+            break
 
     try:
         final_pairs = parse_retention_inventory(
@@ -610,12 +707,16 @@ def execute_pair_deletion(
         )
         final_versions = inventory_version_map(final_pairs)
         verify_protected_versions(final_versions, protected)
+        present_names = set(final_versions.values())
         for component in ("ciphertext", "checksum"):
             file_id = str(results[component]["file_id"])
-            results[component]["absent_after"] = file_id not in final_versions
-    except BackupError as error:
+            name = str(results[component]["name"])
+            results[component]["absent_after"] = (
+                file_id not in final_versions and name not in present_names
+            )
+    except Exception as error:
         record["status"] = "inventory_verification_failed"
-        record["verification_error"] = str(error)
+        record["verification_error"] = f"{type(error).__name__}: {error}"
         path = write_retention_record(config, record, existing=record_path)
         raise RetentionRecoveryRequired(
             f"retention inventory verification failed; recovery record: {path}"
@@ -690,27 +791,63 @@ def revalidate_pair_for_deletion(
 
 def retry_retention(config: Config, recovery_file: Path) -> dict[str, object]:
     record = load_retention_record(config, recovery_file)
-    if record.get("status") == "complete":
-        return record
+    if (
+        record.get("retention_days") != config.retention_days
+        or record.get("retention_minimum") != config.retention_minimum
+    ):
+        raise BackupError("retention policy changed since the recovery record was written")
     pair_name = str(record["pair_name"])
     components = record.get("components")
-    if not isinstance(components, dict):
-        raise BackupError("recovery record has no component state")
-    expected_ids = {
-        str(component["file_id"])
-        for component in components.values()
-        if isinstance(component, dict) and component.get("file_id")
-    }
+    parent = config.prefix.rstrip("/") + "/"
+    if not pair_name.startswith(parent) or "/" in pair_name.removeprefix(parent) or not OBJECT_NAME.fullmatch(pair_name):
+        raise BackupError("recovery record has an invalid pair name or prefix")
+    if not isinstance(components, dict) or set(components) != {"ciphertext", "checksum"}:
+        raise BackupError("recovery record must contain exactly two components")
+    expected_ids: set[str] = set()
+    for component_name, expected_name in (
+        ("ciphertext", pair_name),
+        ("checksum", pair_name + ".sha256"),
+    ):
+        component = components[component_name]
+        if (
+            not isinstance(component, dict)
+            or component.get("name") != expected_name
+            or not isinstance(component.get("file_id"), str)
+            or not component["file_id"]
+        ):
+            raise BackupError("recovery record component name or version ID is invalid")
+        expected_ids.add(component["file_id"])
+    if len(expected_ids) != 2:
+        raise BackupError("recovery record repeats a version ID")
+    recorded_protected = record.get("protected_versions")
+    if (
+        not isinstance(recorded_protected, dict)
+        or any(not isinstance(key, str) or not isinstance(value, str) for key, value in recorded_protected.items())
+        or expected_ids & set(recorded_protected)
+    ):
+        raise BackupError("recovery record has no protected inventory")
+    if record.get("status") == "complete":
+        preflight(config, recovery=False)
+        final_pairs = parse_retention_inventory(config, list_objects(config))
+        final_versions = inventory_version_map(final_pairs)
+        verify_protected_versions(final_versions, recorded_protected)
+        present_names = set(final_versions.values())
+        if any(
+            component["file_id"] in final_versions or component["name"] in present_names
+            for component in components.values()
+        ):
+            raise BackupError("completed retention target versions changed or reappeared")
+        return record
     pair, current_protected = revalidate_pair_for_deletion(
         config,
         pair_name,
         expected_ids,
         allowed_incomplete=pair_name,
     )
-    recorded_protected = record.get("protected_versions")
-    if not isinstance(recorded_protected, dict):
-        raise BackupError("recovery record has no protected inventory")
     verify_protected_versions(current_protected, recorded_protected)
+    skip_absent = {
+        component for component in ("ciphertext", "checksum") if pair[component] is None
+    }
     for component in ("ciphertext", "checksum"):
         if pair[component] is None:
             saved = components.get(component)
@@ -724,8 +861,9 @@ def retry_retention(config: Config, recovery_file: Path) -> dict[str, object]:
         config,
         pair_name,
         pair,
-        recorded_protected,
+        current_protected,
         recovery_path=recovery_file,
+        skip_absent=skip_absent,
     )
 
 
@@ -753,6 +891,7 @@ def apply_retention(
             "prefix": config.prefix,
             "candidates": candidates,
         }
+    reject_pending_retention_records(config)
     completed: list[dict[str, object]] = []
     for pair_name in candidates:
         planned_pair = pairs[pair_name]
