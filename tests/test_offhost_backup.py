@@ -57,8 +57,8 @@ def make_backup_set(tmp_path: Path) -> Path:
     return root
 
 
-def config() -> offhost_backup.Config:
-    return offhost_backup.Config(
+def config(**overrides) -> offhost_backup.Config:
+    values = dict(
         bucket="private-backups",
         prefix="geovislm/production",
         recipient=None,
@@ -68,6 +68,20 @@ def config() -> offhost_backup.Config:
         retention_days=90,
         retention_minimum=3,
     )
+    values.update(overrides)
+    return offhost_backup.Config(**values)
+
+
+def remote_object(name: str, file_id: str, action: str = "upload") -> dict[str, object]:
+    return {"fileName": name, "fileId": file_id, "action": action}
+
+
+def remote_pair(prefix: str, stamp: str, suffix: str = "") -> list[dict[str, object]]:
+    name = f"{prefix}/production-drill-{stamp}.tar.age"
+    return [
+        remote_object(name, f"cipher-{stamp}{suffix}"),
+        remote_object(name + ".sha256", f"checksum-{stamp}{suffix}"),
+    ]
 
 
 def test_validated_backup_covers_all_application_record_types(tmp_path):
@@ -188,19 +202,264 @@ def test_retry_retries_then_succeeds(monkeypatch):
 
 
 def test_retention_keeps_recent_and_newest_three():
-    names = [
-        f"geovislm/production/production-drill-20260{month}01T000000Z.tar.age"
-        for month in range(1, 7)
-    ]
+    cfg = config()
+    objects = []
+    for month in range(1, 7):
+        objects.extend(remote_pair(cfg.prefix, f"20260{month}01T000000Z"))
+    pairs = offhost_backup.parse_retention_inventory(cfg, objects)
 
-    deleted = offhost_backup.retention_deletions(
-        names,
+    deleted = offhost_backup.eligible_pair_names(
+        pairs,
         now=datetime(2026, 10, 17, tzinfo=timezone.utc),
         days=90,
         minimum=3,
     )
 
-    assert deleted == names[:3]
+    assert deleted == [
+        f"{cfg.prefix}/production-drill-20260{month}01T000000Z.tar.age"
+        for month in range(1, 4)
+    ]
+
+
+def test_retention_inventory_requires_exact_canary_prefix_and_single_versions():
+    cfg = config(prefix="geovislm/production/retention-canary")
+    objects = remote_pair(cfg.prefix, "20260101T000000Z")
+
+    pairs = offhost_backup.parse_retention_inventory(cfg, objects)
+    assert len(pairs) == 1
+
+    with pytest.raises(offhost_backup.BackupError, match="escaped"):
+        offhost_backup.parse_retention_inventory(
+            cfg,
+            [remote_object("geovislm/production/wrong/object.tar.age", "wrong")],
+        )
+
+    with pytest.raises(offhost_backup.BackupError, match="multiple versions"):
+        offhost_backup.parse_retention_inventory(
+            cfg,
+            objects + [remote_object(objects[0]["fileName"], "duplicate-version")],
+        )
+
+
+def test_unexpected_incomplete_pair_blocks_unrelated_retention(monkeypatch):
+    cfg = config(prefix="geovislm/production/retention-canary")
+    incomplete = remote_pair(cfg.prefix, "20200101T000000Z")[:1]
+    monkeypatch.setattr(offhost_backup, "list_objects", lambda _config: incomplete)
+    monkeypatch.setattr(
+        offhost_backup,
+        "delete_version",
+        lambda *_args: pytest.fail("deletion must not start"),
+    )
+
+    with pytest.raises(offhost_backup.BackupError, match="incomplete backup pair"):
+        offhost_backup.apply_retention(cfg, dry_run=False)
+
+
+def test_immediate_revalidation_rejects_changed_object_versions(monkeypatch):
+    cfg = config(prefix="geovislm/production/retention-canary")
+    target_name = f"{cfg.prefix}/production-drill-20200101T000000Z.tar.age"
+    objects = remote_pair(cfg.prefix, "20200101T000000Z", "-changed")
+    for stamp in ("20260701T000000Z", "20260801T000000Z", "20260901T000000Z"):
+        objects.extend(remote_pair(cfg.prefix, stamp))
+    monkeypatch.setattr(offhost_backup, "preflight", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(offhost_backup, "list_objects", lambda _config: objects)
+
+    with pytest.raises(offhost_backup.BackupError, match="versions changed"):
+        offhost_backup.revalidate_pair_for_deletion(
+            cfg,
+            target_name,
+            {"cipher-original", "checksum-original"},
+        )
+
+
+def test_two_object_deletion_records_partial_failure(monkeypatch, tmp_path):
+    cfg = config(
+        prefix="geovislm/production/retention-canary",
+        retention_state_dir=tmp_path / "state",
+    )
+    target_name = f"{cfg.prefix}/production-drill-20200101T000000Z.tar.age"
+    target_objects = remote_pair(cfg.prefix, "20200101T000000Z")
+    target_pairs = offhost_backup.parse_retention_inventory(cfg, target_objects)
+    protected_objects = []
+    for stamp in ("20260701T000000Z", "20260801T000000Z", "20260901T000000Z"):
+        protected_objects.extend(remote_pair(cfg.prefix, stamp))
+    protected = offhost_backup.inventory_version_map(
+        offhost_backup.parse_retention_inventory(cfg, protected_objects)
+    )
+    monkeypatch.setattr(
+        offhost_backup,
+        "delete_version",
+        lambda _config, version: (
+            (True, None)
+            if version["name"] == target_name
+            else (False, "simulated sidecar failure")
+        ),
+    )
+    monkeypatch.setattr(
+        offhost_backup,
+        "list_objects",
+        lambda _config: [target_objects[1], *protected_objects],
+    )
+
+    with pytest.raises(offhost_backup.RetentionRecoveryRequired, match="partial"):
+        offhost_backup.execute_pair_deletion(
+            cfg,
+            target_name,
+            target_pairs[target_name],
+            protected,
+        )
+
+    records = list(cfg.retention_state_dir.glob("*.json"))
+    assert len(records) == 1
+    record = json.loads(records[0].read_text())
+    assert record["status"] == "partial"
+    assert record["components"]["ciphertext"]["absent_after"] is True
+    assert record["components"]["checksum"]["absent_after"] is False
+    assert record["components"]["ciphertext"]["file_id"] == target_objects[0]["fileId"]
+    assert record["components"]["checksum"]["file_id"] == target_objects[1]["fileId"]
+
+
+def test_recovery_intent_is_durable_before_first_delete(monkeypatch, tmp_path):
+    cfg = config(
+        prefix="geovislm/production/retention-canary",
+        retention_state_dir=tmp_path / "state",
+    )
+    target_name = f"{cfg.prefix}/production-drill-20200101T000000Z.tar.age"
+    target_objects = remote_pair(cfg.prefix, "20200101T000000Z")
+    target_pair = offhost_backup.parse_retention_inventory(cfg, target_objects)[target_name]
+    protected_objects = remote_pair(cfg.prefix, "20260901T000000Z")
+    protected = offhost_backup.inventory_version_map(
+        offhost_backup.parse_retention_inventory(cfg, protected_objects)
+    )
+    attempts = []
+
+    def delete(_config, version):
+        saved = json.loads(next(cfg.retention_state_dir.glob("*.json")).read_text())
+        if not attempts:
+            assert saved["status"] == "prepared"
+            assert all(
+                saved["components"][component]["delete_command_succeeded"] is None
+                for component in ("ciphertext", "checksum")
+            )
+        else:
+            assert saved["status"] == "deletion_in_progress"
+            assert saved["components"]["ciphertext"]["delete_command_succeeded"] is True
+        attempts.append(version["file_id"])
+        return True, None
+
+    monkeypatch.setattr(offhost_backup, "delete_version", delete)
+    monkeypatch.setattr(offhost_backup, "list_objects", lambda _config: protected_objects)
+
+    result = offhost_backup.execute_pair_deletion(
+        cfg,
+        target_name,
+        target_pair,
+        protected,
+    )
+
+    assert result["status"] == "complete"
+    assert len(attempts) == 2
+    persisted = json.loads(Path(result["recovery_record"]).read_text())
+    assert persisted["status"] == "complete"
+
+
+def test_partial_deletion_retry_is_idempotent_and_verifies_inventory(monkeypatch, tmp_path):
+    cfg = config(
+        prefix="geovislm/production/retention-canary",
+        retention_state_dir=tmp_path / "state",
+    )
+    target_name = f"{cfg.prefix}/production-drill-20200101T000000Z.tar.age"
+    target_objects = remote_pair(cfg.prefix, "20200101T000000Z")
+    protected_objects = []
+    for stamp in ("20260701T000000Z", "20260801T000000Z", "20260901T000000Z"):
+        protected_objects.extend(remote_pair(cfg.prefix, stamp))
+    protected = offhost_backup.inventory_version_map(
+        offhost_backup.parse_retention_inventory(cfg, protected_objects)
+    )
+    record = {
+        "schema_version": 1,
+        "bucket": cfg.bucket,
+        "prefix": cfg.prefix,
+        "pair_name": target_name,
+        "backup_timestamp": "2020-01-01T00:00:00+00:00",
+        "checked_at": "2026-10-18T00:00:00+00:00",
+        "retention_days": 90,
+        "retention_minimum": 3,
+        "components": {
+            "ciphertext": {
+                "name": target_objects[0]["fileName"],
+                "file_id": target_objects[0]["fileId"],
+                "absent_after": True,
+            },
+            "checksum": {
+                "name": target_objects[1]["fileName"],
+                "file_id": target_objects[1]["fileId"],
+                "absent_after": False,
+            },
+        },
+        "protected_versions": protected,
+        "status": "partial",
+    }
+    cfg.retention_state_dir.mkdir(mode=0o700)
+    recovery_file = cfg.retention_state_dir / "partial.json"
+    recovery_file.write_text(json.dumps(record))
+    recovery_file.chmod(0o600)
+    inventories = iter(
+        [
+            [target_objects[1], *protected_objects],
+            protected_objects,
+        ]
+    )
+    monkeypatch.setattr(offhost_backup, "preflight", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(offhost_backup, "list_objects", lambda _config: next(inventories))
+    attempted = []
+
+    def delete(_config, version):
+        attempted.append(version["file_id"])
+        return (version["file_id"] == target_objects[1]["fileId"], None)
+
+    monkeypatch.setattr(offhost_backup, "delete_version", delete)
+
+    result = offhost_backup.retry_retention(cfg, recovery_file)
+
+    assert result["status"] == "complete"
+    assert set(attempted) == {target_objects[0]["fileId"], target_objects[1]["fileId"]}
+    saved = json.loads(recovery_file.read_text())
+    assert saved["status"] == "complete"
+    assert all(
+        saved["components"][component]["absent_after"]
+        for component in ("ciphertext", "checksum")
+    )
+
+
+def test_final_inventory_must_preserve_every_non_target_version(monkeypatch, tmp_path):
+    cfg = config(
+        prefix="geovislm/production/retention-canary",
+        retention_state_dir=tmp_path / "state",
+    )
+    target_name = f"{cfg.prefix}/production-drill-20200101T000000Z.tar.age"
+    target_objects = remote_pair(cfg.prefix, "20200101T000000Z")
+    target_pair = offhost_backup.parse_retention_inventory(cfg, target_objects)[target_name]
+    protected_objects = remote_pair(cfg.prefix, "20260901T000000Z")
+    protected = offhost_backup.inventory_version_map(
+        offhost_backup.parse_retention_inventory(cfg, protected_objects)
+    )
+    monkeypatch.setattr(offhost_backup, "delete_version", lambda *_args: (True, None))
+    monkeypatch.setattr(offhost_backup, "list_objects", lambda _config: [])
+
+    with pytest.raises(
+        offhost_backup.RetentionRecoveryRequired,
+        match="inventory verification failed",
+    ):
+        offhost_backup.execute_pair_deletion(
+            cfg,
+            target_name,
+            target_pair,
+            protected,
+        )
+
+    record = json.loads(next(cfg.retention_state_dir.glob("*.json")).read_text())
+    assert record["status"] == "inventory_verification_failed"
 
 
 def test_safe_extract_rejects_path_traversal(tmp_path):

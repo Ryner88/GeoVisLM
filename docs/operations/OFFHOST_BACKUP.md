@@ -136,13 +136,53 @@ sudo systemd-run --wait --pipe \
   /opt/geovis_lm/scripts/offhost_backup.py retention
 ```
 
-For live acceptance, upload disposable encrypted fixture objects under a
-dedicated test sub-prefix with timestamps that exercise the 90-day and
-newest-three rules. Review the preview, run with `--apply`, and prove the
-selected fixture ciphertext and sidecar were removed while retained objects
-remain downloadable. Do not test deletion against production objects until the
-preview has been reviewed. Bucket lifecycle rules may provide a second safety
-net, but they must not silently conflict with the newest-three rule.
+For live acceptance, use a separate protected environment file whose
+`B2_PREFIX` and prefix-scoped application key point exactly at a disposable
+canary prefix. Upload complete encrypted fixture pairs there with timestamps
+that exercise the 90-day and newest-three rules. Do not place unrelated files
+under that prefix.
+
+Immediately before each deletion, the client reauthorizes the exact bucket and
+prefix, lists all B2 versions, rechecks the 90-day cutoff and newest-three set,
+and confirms the planned version IDs are unchanged. It refuses to proceed if
+it sees an incomplete pair, multiple versions, a hide marker, a nested or
+unexpected object, a changed version, or changed eligibility. Deletion targets
+the exact ciphertext and sidecar version IDs separately; it is not described as
+atomic.
+
+Before the first delete command, the client durably writes the exact bucket,
+prefix, component names and version IDs, retention decision, and protected
+inventory to the root-only recovery record. It updates that record after each
+component command, so a process or host interruption between calls remains
+recoverable without rediscovering or guessing a target.
+
+After both commands, a fresh versioned inventory must prove that both target
+versions are absent and every non-target version from the pre-delete inventory
+still exists. Each component records the command result and verified final
+presence separately. A partial or ambiguous result writes a root-only JSON
+record under `/root/geovis-backups/offhost-retention-state/` and stops all
+unrelated retention work. Retry only that exact pair with:
+
+```bash
+sudo systemd-run --wait --pipe \
+  --property=EnvironmentFile=/etc/geovis-lm/offhost-retention-canary.env \
+  --working-directory=/opt/geovis_lm \
+  /opt/geovis_lm/scripts/offhost_backup.py retention --apply \
+  --recovery-file /root/geovis-backups/offhost-retention-state/retention-PAIR.json
+```
+
+The retry is idempotent: an already absent component remains absent, a present
+component is removed only by its recorded version ID, and success still
+requires the final inventory and protected-version check. Never delete or edit
+the recovery record until it says `status: complete` and its evidence has been
+reviewed.
+
+Review the canary preview, run with `--apply`, and prove the selected fixture
+ciphertext and sidecar were removed while retained objects remain downloadable.
+Do not point the canary environment at the production prefix. Do not test
+production deletion until the canary result is accepted. Bucket lifecycle rules
+may provide a second safety net, but they must not silently conflict with the
+newest-three rule.
 
 ## Credential and key recovery
 
