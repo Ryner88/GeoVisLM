@@ -589,7 +589,7 @@ class StagedFilePayload(BaseModel):
 
 
 class StagedBatchPayload(BaseModel):
-    files: list[StagedFilePayload] = Field(min_length=1, max_length=50)
+    files: list[StagedFilePayload] = Field(min_length=1)
     idempotency_key: str | None = Field(default=None, max_length=128)
 
 

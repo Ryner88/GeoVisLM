@@ -1279,6 +1279,8 @@ def test_staged_upload_quota_authorization_and_cleanup(app_module, tmp_path):
 
 
 def test_staged_batch_metadata_is_bounded_before_json_parsing(app_module):
+    from dataclasses import replace
+
     project, run = create_project_and_run(app_module.app)
     base = f"/api/projects/{project['id']}/runs/{run['run_id']}/batches"
     oversized = request(
@@ -1307,7 +1309,26 @@ def test_staged_batch_metadata_is_bounded_before_json_parsing(app_module):
         headers=auth(),
         json={"files": [{"filename": f"{index}.csv", "size_bytes": 1} for index in range(51)]},
     )
-    assert too_many.status_code == 422
+    assert too_many.status_code == 413
+
+    app_module.CONFIG = replace(app_module.CONFIG, max_batch_files=55)
+    configured_limit = request(
+        app_module.app,
+        "post",
+        base,
+        headers=auth(),
+        json={"files": [{"filename": f"configured-{index}.csv", "size_bytes": 0} for index in range(51)]},
+    )
+    assert configured_limit.status_code == 200, configured_limit.text
+
+    over_configured_limit = request(
+        app_module.app,
+        "post",
+        base,
+        headers=auth(),
+        json={"files": [{"filename": f"over-{index}.csv", "size_bytes": 0} for index in range(56)]},
+    )
+    assert over_configured_limit.status_code == 413
 
 
 def test_interrupted_batch_releases_unused_quota_and_can_resume_or_cancel(app_module):
