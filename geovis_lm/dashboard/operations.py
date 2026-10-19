@@ -1444,6 +1444,16 @@ def project_upload_bytes(config: DashboardConfig, project_id: str) -> int:
                 except (OSError, ValueError):
                     total += sum(path.stat().st_size for path in directory.iterdir() if path.is_file() and path != manifest)
                     continue
+                if batch.get("kind") == "multipart_reservation":
+                    try:
+                        expiry = datetime.fromisoformat(batch["reservation_expires_at"])
+                        if expiry.tzinfo is None:
+                            expiry = expiry.replace(tzinfo=timezone.utc)
+                    except (ValueError, KeyError, TypeError):
+                        expiry = datetime.min.replace(tzinfo=timezone.utc)
+                    if expiry > datetime.now(timezone.utc):
+                        total += sum(int(item["size_bytes"]) for item in batch.get("files", []))
+                    continue
                 committed = {item.get("stored_filename") for item in run.get("inputs", []) if item.get("source_batch_id") == batch.get("batch_id")}
                 if batch.get("status") == "validating" and committed == {item.get("filename") for item in batch.get("files", [])}:
                     continue
@@ -1487,7 +1497,7 @@ def reserved_input_names(run: dict[str, Any]) -> set[str]:
     }
 
 
-def _ingest_file_paths_locked(config: DashboardConfig, run: dict[str, Any], paths: list[tuple[str, Path, str | None]], *, staged_bytes: int = 0, source_batch_id: str | None = None) -> dict[str, Any]:
+def _ingest_file_paths_locked(config: DashboardConfig, run: dict[str, Any], paths: list[tuple[str, Any, str | None]], *, staged_bytes: int = 0, source_batch_id: str | None = None) -> dict[str, Any]:
     if not paths:
         raise upload_error("empty_batch", "Select at least one file")
     if len(paths) > config.max_batch_files:
@@ -1498,7 +1508,15 @@ def _ingest_file_paths_locked(config: DashboardConfig, run: dict[str, Any], path
     existing_names = reserved_input_names(run)
     if any(name.lower() in existing_names for name in names):
         raise upload_error("duplicate_filename", "A file with this name is already in the run; create a new run to replace it")
-    sizes = [path.stat().st_size for _, path, _ in paths]
+    sizes = []
+    for _, source, _ in paths:
+        if isinstance(source, Path):
+            sizes.append(source.stat().st_size)
+        else:
+            position = source.tell()
+            source.seek(0, os.SEEK_END)
+            sizes.append(source.tell())
+            source.seek(position)
     for name, size in zip(names, sizes):
         if Path(name).suffix.lower() not in ALLOWED_EXTENSIONS:
             raise upload_error("unsupported_file_type", f"Unsupported file extension for {name}", name)
@@ -1523,7 +1541,13 @@ def _ingest_file_paths_locked(config: DashboardConfig, run: dict[str, Any], path
         for (original, source, content_type), name, size in zip(paths, names, sizes):
             extension = Path(name).suffix.lower()
             raw_path = ensure_child_path(raw_dir, raw_dir / name)
-            shutil.copyfile(source, raw_path)
+            if isinstance(source, Path):
+                shutil.copyfile(source, raw_path)
+            else:
+                source.seek(0)
+                with raw_path.open("wb") as destination:
+                    shutil.copyfileobj(source, destination)
+                source.seek(0)
             record = {
                 "id": uuid4().hex, "project_id": run["project_id"], "run_id": run["run_id"],
                 "role": "input", "file_type": file_type_from_extension(extension),
@@ -1614,6 +1638,9 @@ def batch_dir(config: DashboardConfig, run_id: str, batch_id: str) -> Path:
 
 
 TRANSFER_LEASE_SECONDS = 10 * 60
+MULTIPART_RESERVATION_LEASE_SECONDS = 10 * 60
+MULTIPART_METADATA_OVERHEAD_BYTES = 32 * 1024
+MAX_CONCURRENT_MULTIPART_RESERVATIONS = 4
 
 
 def get_upload_batch(config: DashboardConfig, run_id: str, batch_id: str) -> dict[str, Any]:
@@ -1627,6 +1654,99 @@ def get_upload_batch(config: DashboardConfig, run_id: str, batch_id: str) -> dic
             raise upload_error("invalid_batch", "Upload batch contains an unsafe filename")
         ensure_child_path(directory, directory / name)
     return batch
+
+
+def reserve_multipart_upload(config: DashboardConfig, run: dict[str, Any], declared_content_length: int | None) -> dict[str, Any]:
+    with project_upload_lock(config, run["project_id"]):
+        current_run = get_run(config, run["run_id"])
+        if current_run["status"] not in {"created", "uploaded", "retrying"}:
+            raise upload_error("run_not_editable", "Uploads are closed for this analysis")
+        now = datetime.now(timezone.utc)
+        active_reservations = 0
+        for project_run in list_runs(config, run["project_id"]):
+            staging = run_dir(config, project_run["run_id"]) / "inputs" / "staging"
+            for directory in staging.iterdir() if staging.exists() else []:
+                manifest = directory / "batch.json"
+                if not manifest.is_file():
+                    continue
+                try:
+                    reservation = json.loads(manifest.read_text(encoding="utf-8"))
+                    expires = datetime.fromisoformat(reservation["reservation_expires_at"])
+                    if expires.tzinfo is None:
+                        expires = expires.replace(tzinfo=timezone.utc)
+                except (OSError, ValueError, KeyError, TypeError):
+                    continue
+                if reservation.get("kind") != "multipart_reservation":
+                    continue
+                if now >= expires:
+                    shutil.rmtree(directory)
+                else:
+                    active_reservations += 1
+        if active_reservations >= MAX_CONCURRENT_MULTIPART_RESERVATIONS:
+            raise upload_error("upload_reservation_busy", "Too many multipart uploads are in progress", status=429)
+        max_wire_bytes = config.max_upload_batch_bytes + MULTIPART_METADATA_OVERHEAD_BYTES
+        if declared_content_length is not None and declared_content_length > max_wire_bytes:
+            raise upload_error("batch_too_large", "Multipart request exceeds the configured batch limit", status=413)
+        available = max(0, config.max_project_bytes - project_upload_bytes(config, run["project_id"]))
+        if available == 0:
+            raise upload_error("project_quota_exceeded", "Project upload quota is full", status=413)
+        if declared_content_length is None:
+            reservation_bytes = min(config.max_upload_batch_bytes, available)
+            wire_limit = reservation_bytes + MULTIPART_METADATA_OVERHEAD_BYTES
+        else:
+            wire_limit = declared_content_length
+            reservation_bytes = max(0, declared_content_length - MULTIPART_METADATA_OVERHEAD_BYTES)
+        if reservation_bytes > available:
+            raise upload_error("project_quota_exceeded", "Upload exceeds the remaining project storage quota", status=413)
+        reservation_id = uuid4().hex
+        directory = batch_dir(config, run["run_id"], reservation_id)
+        directory.mkdir(parents=True)
+        now = datetime.now(timezone.utc)
+        expires = now + timedelta(seconds=MULTIPART_RESERVATION_LEASE_SECONDS)
+        write_json(directory / "batch.json", {
+            "batch_id": reservation_id,
+            "run_id": run["run_id"],
+            "project_id": run["project_id"],
+            "kind": "multipart_reservation",
+            "status": "uploading",
+            "files": [{"filename": "multipart-reservation.bin", "size_bytes": reservation_bytes, "status": "receiving"}],
+            "created_at": now.isoformat(),
+            "updated_at": now.isoformat(),
+            "reservation_expires_at": expires.isoformat(),
+        })
+        return {"reservation_id": reservation_id, "wire_limit": wire_limit, "reserved_bytes": reservation_bytes}
+
+
+def renew_multipart_upload_reservation(config: DashboardConfig, project_id: str, run_id: str, reservation_id: str) -> bool:
+    with project_upload_lock(config, project_id):
+        return _renew_multipart_upload_reservation_locked(config, run_id, reservation_id)
+
+
+def _renew_multipart_upload_reservation_locked(config: DashboardConfig, run_id: str, reservation_id: str) -> bool:
+    directory = batch_dir(config, run_id, reservation_id)
+    manifest = directory / "batch.json"
+    if not manifest.is_file():
+        return False
+    reservation = read_json(manifest, "Upload reservation not found")
+    if reservation.get("kind") != "multipart_reservation":
+        return False
+    now = datetime.now(timezone.utc)
+    reservation["updated_at"] = now.isoformat()
+    reservation["reservation_expires_at"] = (now + timedelta(seconds=MULTIPART_RESERVATION_LEASE_SECONDS)).isoformat()
+    write_json(manifest, reservation)
+    return True
+
+
+def release_multipart_upload_reservation(config: DashboardConfig, project_id: str, run_id: str, reservation_id: str) -> None:
+    with project_upload_lock(config, project_id):
+        _release_multipart_upload_reservation_locked(config, run_id, reservation_id)
+
+
+def _release_multipart_upload_reservation_locked(config: DashboardConfig, run_id: str, reservation_id: str) -> None:
+    directory = batch_dir(config, run_id, reservation_id)
+    manifest = directory / "batch.json"
+    if manifest.is_file() and read_json(manifest, "Upload reservation not found").get("kind") == "multipart_reservation":
+        shutil.rmtree(directory)
 
 
 def begin_batch_file_transfer(config: DashboardConfig, project_id: str, run_id: str, batch_id: str, file_index: int, *, replace_uploaded: bool = False) -> dict[str, Any]:
@@ -1737,6 +1857,21 @@ def cleanup_abandoned_uploads(config: DashboardConfig, project_id: str, *, now: 
                     continue
                 metadata = directory / "batch.json"
                 updated = datetime.fromtimestamp(directory.stat().st_mtime, timezone.utc)
+                try:
+                    batch = json.loads(metadata.read_text(encoding="utf-8")) if metadata.exists() else {}
+                except (OSError, ValueError):
+                    batch = {}
+                if batch.get("kind") == "multipart_reservation":
+                    try:
+                        expiry = datetime.fromisoformat(batch["reservation_expires_at"])
+                        if expiry.tzinfo is None:
+                            expiry = expiry.replace(tzinfo=timezone.utc)
+                    except (ValueError, KeyError, TypeError):
+                        expiry = now
+                    if now >= expiry:
+                        shutil.rmtree(directory)
+                        removed += 1
+                    continue
                 if metadata.exists():
                     try:
                         updated = datetime.fromisoformat(json.loads(metadata.read_text())["updated_at"])

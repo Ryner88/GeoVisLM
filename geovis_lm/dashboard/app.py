@@ -35,7 +35,11 @@ from geovis_lm.dashboard.operations import (
     get_upload_batch,
     ingest_file_paths,
     _ingest_file_paths_locked,
-    project_upload_bytes,
+    reserve_multipart_upload,
+    renew_multipart_upload_reservation,
+    release_multipart_upload_reservation,
+    _renew_multipart_upload_reservation_locked,
+    _release_multipart_upload_reservation_locked,
     upload_error,
     create_project,
     create_report_comment,
@@ -1181,28 +1185,54 @@ async def upload_project_run_files(project_id: str, run_id: str, request: Reques
 @app.post("/api/projects/{project_id}/runs/{run_id}/files/multipart")
 async def upload_project_run_multipart(project_id: str, run_id: str, request: Request) -> dict:
     run = authorized_upload_run(project_id, run_id, request)
-    # Bound parsing by the batch limit. The project quota is checked under the
-    # upload lock after the request body has been fully spooled.
-    return await _upload_project_run_multipart(request, run, CONFIG.max_upload_batch_bytes + 1024 * 1024)
-
-
-async def _upload_project_run_multipart(request: Request, run: dict, wire_limit: int) -> dict:
     content_length = request.headers.get("content-length")
     if content_length:
         try:
             declared_length = int(content_length)
         except ValueError as exc:
             raise upload_error("invalid_upload", "Content-Length must be an integer") from exc
-        if declared_length > wire_limit:
-            raise upload_error("batch_too_large", f"Batch exceeds the {CONFIG.max_upload_batch_bytes} byte limit", status=413)
+        if declared_length < 0:
+            raise upload_error("invalid_upload", "Content-Length cannot be negative")
+    else:
+        declared_length = None
+    reservation = await run_in_threadpool(reserve_multipart_upload, CONFIG, run, declared_length)
+    try:
+        return await _upload_project_run_multipart(request, run, reservation)
+    finally:
+        with anyio.CancelScope(shield=True):
+            await run_in_threadpool(
+                release_multipart_upload_reservation,
+                CONFIG,
+                run["project_id"],
+                run["run_id"],
+                reservation["reservation_id"],
+            )
+
+
+async def _upload_project_run_multipart(request: Request, run: dict, reservation: dict) -> dict:
+    wire_limit = reservation["wire_limit"]
     received = 0
+    last_renewed = time.monotonic() - 30
 
     async def bounded_receive():
-        nonlocal received
+        nonlocal received, last_renewed
         message = await request.receive()
         received += len(message.get("body", b""))
         if received > wire_limit:
-            raise upload_error("batch_too_large", f"Batch exceeds the {CONFIG.max_upload_batch_bytes} byte limit", status=413)
+            if reservation["reserved_bytes"] >= CONFIG.max_upload_batch_bytes:
+                raise upload_error("batch_too_large", f"Batch exceeds the {CONFIG.max_upload_batch_bytes} byte limit", status=413)
+            raise upload_error("project_quota_exceeded", "Multipart request exceeded its reserved project quota", status=413)
+        if time.monotonic() - last_renewed >= 30:
+            renewed = await run_in_threadpool(
+                renew_multipart_upload_reservation,
+                CONFIG,
+                run["project_id"],
+                run["run_id"],
+                reservation["reservation_id"],
+            )
+            if not renewed:
+                raise upload_error("upload_reservation_expired", "Multipart upload reservation expired", status=413)
+            last_renewed = time.monotonic()
         return message
 
     limited_request = Request(request.scope, receive=bounded_receive)
@@ -1210,38 +1240,48 @@ async def _upload_project_run_multipart(request: Request, run: dict, wire_limit:
         uploads = form.getlist("files")
         if not uploads or len(uploads) > CONFIG.max_batch_files or any(not isinstance(item, UploadFile) for item in uploads):
             raise upload_error("invalid_upload", f"Send 1 to {CONFIG.max_batch_files} file parts named files")
-        with tempfile.TemporaryDirectory(dir=run_dir(CONFIG, run["run_id"])) as temporary:
-            paths = []
-            total_size = 0
-            for index, upload in enumerate(uploads):
-                name = normalize_filename(upload.filename or "")
-                if upload.size is not None and upload.size > CONFIG.max_upload_file_bytes:
-                    raise upload_error("file_too_large", f"{name} exceeds the {CONFIG.max_upload_file_bytes} byte file limit", name, 413)
-                destination = Path(temporary) / str(index)
-                size = 0
-                async with await anyio.open_file(destination, "wb") as handle:
-                    while chunk := await upload.read(1024 * 1024):
-                        size += len(chunk)
-                        total_size += len(chunk)
-                        if size > CONFIG.max_upload_file_bytes:
-                            raise upload_error("file_too_large", f"{name} exceeds the {CONFIG.max_upload_file_bytes} byte file limit", name, 413)
-                        if total_size > CONFIG.max_upload_batch_bytes:
-                            raise upload_error("batch_too_large", f"Batch exceeds the {CONFIG.max_upload_batch_bytes} byte limit", status=413)
-                        await handle.write(chunk)
-                paths.append((upload.filename or name, destination, upload.content_type))
-            return await run_in_threadpool(_ingest_multipart_paths_with_lock, run, paths, total_size)
+        paths = []
+        total_size = 0
+        for upload in uploads:
+            name = normalize_filename(upload.filename or "")
+            if upload.size is not None and upload.size > CONFIG.max_upload_file_bytes:
+                raise upload_error("file_too_large", f"{name} exceeds the {CONFIG.max_upload_file_bytes} byte file limit", name, 413)
+            size = upload.size
+            if size is None:
+                size = await run_in_threadpool(_uploaded_file_size, upload.file)
+            total_size += size
+            if total_size > CONFIG.max_upload_batch_bytes:
+                raise upload_error("batch_too_large", f"Batch exceeds the {CONFIG.max_upload_batch_bytes} byte limit", status=413)
+            await upload.seek(0)
+            paths.append((upload.filename or name, upload.file, upload.content_type))
+        return await run_in_threadpool(_ingest_multipart_paths_with_lock, run, paths, total_size, reservation)
 
 
-def _ingest_multipart_paths_with_lock(run: dict, paths: list, total_size: int) -> dict:
+def _ingest_multipart_paths_with_lock(run: dict, paths: list, total_size: int, reservation: dict) -> dict:
     project_id = run["project_id"]
     with project_upload_lock(CONFIG, project_id):
-        current_run = get_run(CONFIG, run["run_id"])
-        if current_run["status"] not in {"created", "uploaded", "retrying"}:
-            raise upload_error("run_not_editable", "Uploads are closed for this analysis")
-        remaining = max(0, CONFIG.max_project_bytes - project_upload_bytes(CONFIG, project_id))
-        if total_size > remaining:
-            raise upload_error("project_quota_exceeded", "Upload exceeds the remaining project storage quota", status=413)
-        return _ingest_file_paths_locked(CONFIG, current_run, paths)
+        try:
+            current_run = get_run(CONFIG, run["run_id"])
+            if current_run["status"] not in {"created", "uploaded", "retrying"}:
+                raise upload_error("run_not_editable", "Uploads are closed for this analysis")
+            if not _renew_multipart_upload_reservation_locked(CONFIG, run["run_id"], reservation["reservation_id"]):
+                raise upload_error("upload_reservation_expired", "Multipart upload reservation expired", status=413)
+            return _ingest_file_paths_locked(
+                CONFIG,
+                current_run,
+                paths,
+                staged_bytes=reservation["reserved_bytes"],
+            )
+        finally:
+            _release_multipart_upload_reservation_locked(CONFIG, run["run_id"], reservation["reservation_id"])
+
+
+def _uploaded_file_size(uploaded_file) -> int:
+    position = uploaded_file.tell()
+    uploaded_file.seek(0, 2)
+    size = uploaded_file.tell()
+    uploaded_file.seek(position)
+    return size
 
 
 def authorized_upload_run(project_id: str, run_id: str, request: Request, *, require_editable: bool = True) -> dict:
@@ -1514,6 +1554,8 @@ def retry_run(run_id: str, request: Request) -> dict:
         status_message="Retry created from failed run",
         inputs=retry["inputs"],
     )
+    if source_run.get("error_code") == "missing_dem" or first_valid_dem(retry) is None:
+        return retry
     retry = update_run(CONFIG, retry["run_id"], status="queued", status_message="Retry queued")
     retry["job"] = create_job_record(CONFIG, retry, principal["user_id"])
     return retry

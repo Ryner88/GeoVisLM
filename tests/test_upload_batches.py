@@ -26,6 +26,9 @@ from geovis_lm.dashboard.operations import (
     ingest_file_paths,
     finish_batch_file_transfer,
     TRANSFER_LEASE_SECONDS,
+    MULTIPART_METADATA_OVERHEAD_BYTES,
+    reserve_multipart_upload,
+    release_multipart_upload_reservation,
     write_json,
 )
 
@@ -162,6 +165,21 @@ def test_stale_receiving_transfer_can_be_claimed_after_restart(tmp_path):
         "pending",
         transfer_id=first["transfer_id"],
     )
+
+
+def test_multipart_reservations_account_for_concurrent_project_quota(tmp_path):
+    config, project, run = setup_run(tmp_path)
+    config = replace(config, max_project_bytes=100)
+    first = reserve_multipart_upload(config, run, MULTIPART_METADATA_OVERHEAD_BYTES + 40)
+    assert project_upload_bytes(config, project["id"]) == 40
+    second = reserve_multipart_upload(config, run, MULTIPART_METADATA_OVERHEAD_BYTES + 50)
+    assert project_upload_bytes(config, project["id"]) == 90
+    with pytest.raises(HTTPException) as error:
+        reserve_multipart_upload(config, run, MULTIPART_METADATA_OVERHEAD_BYTES + 20)
+    assert error.value.detail["error_code"] == "project_quota_exceeded"
+    release_multipart_upload_reservation(config, project["id"], run["run_id"], first["reservation_id"])
+    release_multipart_upload_reservation(config, project["id"], run["run_id"], second["reservation_id"])
+    assert project_upload_bytes(config, project["id"]) == 0
 
 
 def test_unexpected_validation_failure_removes_uncommitted_bytes(tmp_path, monkeypatch):

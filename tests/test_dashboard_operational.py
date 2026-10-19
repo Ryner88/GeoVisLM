@@ -1569,6 +1569,35 @@ def test_concurrent_multipart_uploads_respect_project_quota(app_module):
     assert sorted(result.status_code for result in results) == [200, 413]
 
 
+def test_multipart_reserves_project_quota_before_reading_body(app_module):
+    from dataclasses import replace
+    from fastapi import HTTPException
+    from starlette.requests import Request
+    from geovis_lm.dashboard.operations import MULTIPART_METADATA_OVERHEAD_BYTES
+
+    project, run = create_project_and_run(app_module.app)
+    app_module.CONFIG = replace(app_module.CONFIG, max_project_bytes=16)
+    received = False
+
+    async def receive():
+        nonlocal received
+        received = True
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    headers = [
+        (b"authorization", b"Bearer test-token"),
+        (b"x-geovis-user", b"user-1"),
+        (b"x-geovis-role", b"owner"),
+        (b"content-type", b"multipart/form-data; boundary=unused"),
+        (b"content-length", str(MULTIPART_METADATA_OVERHEAD_BYTES + 17).encode()),
+    ]
+    request_obj = Request({"type": "http", "method": "POST", "headers": headers}, receive)
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(app_module.upload_project_run_multipart(project["id"], run["run_id"], request_obj))
+    assert error.value.detail["error_code"] == "project_quota_exceeded"
+    assert received is False
+
+
 def test_authorization_rejects_cross_user_access(app_module):
     project, _run = create_project_and_run(app_module.app)
 
@@ -1590,10 +1619,10 @@ def test_failed_run_can_create_retry_run(app_module):
     retry_response = request(app_module.app, "post", f"/api/runs/{run['run_id']}/retry", headers=auth())
     assert retry_response.status_code == 200
     retry = retry_response.json()
-    assert retry["status"] == "queued"
+    assert retry["status"] == "retrying"
     assert retry["retry_of_run_id"] == run["run_id"]
     assert retry["attempt_number"] == 2
-    assert retry["job"]["status"] == "queued"
+    assert "job" not in retry
 
 
 def test_retry_run_drops_invalid_input_name_reservations(app_module):
@@ -1617,7 +1646,20 @@ def test_retry_run_drops_invalid_input_name_reservations(app_module):
     assert retry_response.status_code == 200
     retry = retry_response.json()
     assert retry["inputs"] == []
-    assert retry["status"] == "queued"
+    assert retry["status"] == "retrying"
+    retry_base = f"/api/projects/{project['id']}/runs/{retry['run_id']}/files/multipart"
+    corrected = request(
+        app_module.app,
+        "post",
+        retry_base,
+        headers=auth(),
+        files=[("files", ("terrain.tif", Path("data/sample/sample_dem.tif").read_bytes(), "image/tiff"))],
+    )
+    assert corrected.status_code == 200, corrected.text
+    assert corrected.json()["files"][0]["status"] == "valid"
+    queued = request(app_module.app, "post", f"/api/runs/{retry['run_id']}/queue", headers=auth())
+    assert queued.status_code == 200
+    assert queued.json()["status"] == "queued"
 
 
 def test_dem_analysis_adapter_writes_outputs_and_summary(tmp_path):
