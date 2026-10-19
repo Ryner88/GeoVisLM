@@ -114,7 +114,15 @@ cmp "${BACKUP_DIR}/production-outputs-before.tsv" "${BACKUP_DIR}/production-outp
 restore_started_ns="$(date +%s%N)"
 docker volume create "${RESTORE_DB_VOLUME}" >/dev/null
 docker volume create "${RESTORE_OUTPUT_VOLUME}" >/dev/null
-RESTORE_OUTPUT_PATH="$(docker volume inspect "${RESTORE_OUTPUT_VOLUME}" --format '{{.Mountpoint}}')"
+
+restore_output_helper() {
+  local volume_mode="$1"
+  shift
+  docker run --rm --network none --read-only --tmpfs /tmp \
+    --mount "type=volume,source=${RESTORE_OUTPUT_VOLUME},target=/restore/outputs,${volume_mode}" \
+    --mount "type=bind,source=${VERIFY_SCRIPT},target=/restore-verify.py,readonly" \
+    geovis_lm_app:latest "$@"
+}
 
 docker run -d --name "${RESTORE_DB_CONTAINER}" --network none \
   -e POSTGRES_DB=bootstrap \
@@ -138,13 +146,17 @@ docker exec "${RESTORE_DB_CONTAINER}" createdb -U geovis geovis_lm
 docker exec -i "${RESTORE_DB_CONTAINER}" pg_restore -U geovis -d geovis_lm \
   --exit-on-error --no-owner < "${BACKUP_DIR}/postgis.dump"
 
-tar -C "${RESTORE_OUTPUT_PATH}" -xzf "${BACKUP_DIR}/outputs.tar.gz"
+docker run --rm --network none --read-only --tmpfs /tmp \
+  --mount "type=volume,source=${RESTORE_OUTPUT_VOLUME},target=/restore/outputs" \
+  --mount "type=bind,source=${BACKUP_DIR}/outputs.tar.gz,target=/restore/outputs.tar.gz,readonly" \
+  geovis_lm_app:latest \
+  tar -C /restore/outputs -xzf /restore/outputs.tar.gz
 restore_finished_ns="$(date +%s%N)"
 
 database_fingerprint "${RESTORE_DB_CONTAINER}" "${BACKUP_DIR}/restored-db.tsv"
-python3 "${VERIFY_SCRIPT}" manifest "${RESTORE_OUTPUT_PATH}" \
+restore_output_helper readonly python /restore-verify.py manifest /restore/outputs \
   > "${BACKUP_DIR}/restored-outputs.tsv"
-python3 "${VERIFY_SCRIPT}" validate "${RESTORE_OUTPUT_PATH}" \
+restore_output_helper readonly python /restore-verify.py validate /restore/outputs \
   > "${BACKUP_DIR}/restored-content-validation.json"
 
 docker run -d --name "${RESTORE_APP_CONTAINER}" --network none --read-only \

@@ -44,7 +44,11 @@ fingerprint or output manifest changes while the archives are being created.
 The drill creates uniquely named scratch PostGIS and output volumes. The
 scratch database container uses `--network none`; it never joins the production
 Compose network. The restored application container also uses `--network none`,
-a read-only root filesystem, and a read-only restored output mount.
+a read-only root filesystem, and a read-only restored output mount. The output
+archive is extracted and its restored manifest/content are verified through
+temporary network-isolated containers. The drill never writes through the
+scratch volume's host mountpoint, so the systemd service can keep
+`/var/lib/docker/volumes` read-only while protecting production data.
 
 Acceptance requires all of the following:
 
@@ -76,6 +80,10 @@ the scratch volumes.
 - Maintain an encrypted, access-controlled off-host copy before relying on the
   backup for host-loss recovery. The on-host copy validates recoverability but
   does not protect against total Prime host loss.
+- Follow [`OFFHOST_BACKUP.md`](OFFHOST_BACKUP.md) for client-side age
+  encryption, B2 replication, retention, alerting, and the independent B2-only
+  recovery drill. Repository readiness alone does not establish host-loss
+  protection.
 - Review this policy after material schema, storage, or regulatory changes.
 
 ## Cleanup Procedure

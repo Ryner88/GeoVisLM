@@ -31,6 +31,9 @@ outputs/model_samples/*
 !outputs/model_samples/.gitkeep
 
 .env
+offhost-backup.env
+offhost-alert.env
+*.age
 *.qgz
 *.tif.aux.xml
 .DS_Store
