@@ -102,6 +102,36 @@ def test_backup_validation_rejects_corrupt_payload(tmp_path):
         offhost_backup.validate_backup_set(backup)
 
 
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        "",
+        "{postgis}",
+        "{outputs}",
+        "{postgis}{postgis}{outputs}",
+        "{postgis}{outputs}{unexpected}",
+    ],
+)
+def test_backup_validation_requires_each_expected_checksum_exactly_once(
+    tmp_path, manifest
+):
+    backup = make_backup_set(tmp_path)
+    values = {
+        "postgis": f"{hashlib.sha256(b'database').hexdigest()}  postgis.dump\n",
+        "outputs": f"{hashlib.sha256(b'outputs').hexdigest()}  outputs.tar.gz\n",
+        "unexpected": f"{'0' * 64}  extra.payload\n",
+    }
+    (backup / "checksums.sha256").write_text(
+        manifest.format(**values), encoding="utf-8"
+    )
+
+    with pytest.raises(
+        offhost_backup.BackupError,
+        match="duplicate checksum entry|must contain exactly",
+    ):
+        offhost_backup.validate_backup_set(backup)
+
+
 def test_backup_validation_rejects_missing_reports(tmp_path):
     backup = make_backup_set(tmp_path)
     content = json.loads((backup / "restored-content-validation.json").read_text())

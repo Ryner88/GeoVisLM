@@ -39,6 +39,7 @@ REQUIRED_BACKUP_FILES = {
     "timings.env",
     "result.txt",
 }
+REQUIRED_CHECKSUM_PAYLOADS = {"postgis.dump", "outputs.tar.gz"}
 REPLICATION_CAPABILITIES = {
     "listBuckets",
     "listFiles",
@@ -249,7 +250,18 @@ def parse_checksum_file(path: Path) -> dict[str, str]:
         match = re.fullmatch(r"([0-9a-f]{64})  ([^/]+)", line)
         if not match:
             raise BackupError(f"invalid checksum line in {path.name}")
-        checksums[match.group(2)] = match.group(1)
+        name = match.group(2)
+        if name in checksums:
+            raise BackupError(f"duplicate checksum entry in {path.name}: {name}")
+        checksums[name] = match.group(1)
+    names = set(checksums)
+    if names != REQUIRED_CHECKSUM_PAYLOADS:
+        missing = sorted(REQUIRED_CHECKSUM_PAYLOADS - names)
+        unexpected = sorted(names - REQUIRED_CHECKSUM_PAYLOADS)
+        raise BackupError(
+            f"checksum manifest must contain exactly the required payloads; "
+            f"missing={missing}, unexpected={unexpected}"
+        )
     return checksums
 
 

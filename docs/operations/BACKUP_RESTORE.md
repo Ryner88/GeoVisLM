@@ -44,7 +44,11 @@ fingerprint or output manifest changes while the archives are being created.
 The drill creates uniquely named scratch PostGIS and output volumes. The
 scratch database container uses `--network none`; it never joins the production
 Compose network. The restored application container also uses `--network none`,
-a read-only root filesystem, and a read-only restored output mount.
+a read-only root filesystem, and a read-only restored output mount. The output
+archive is extracted and its restored manifest/content are verified through
+temporary network-isolated containers. The drill never writes through the
+scratch volume's host mountpoint, so the systemd service can keep
+`/var/lib/docker/volumes` read-only while protecting production data.
 
 Acceptance requires all of the following:
 
