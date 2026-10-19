@@ -7,7 +7,9 @@ from typing import Callable
 from geovis_lm.dashboard.operations import (
     DashboardConfig,
     claim_next_queued_job,
+    cleanup_abandoned_uploads,
     get_run,
+    list_runs,
     update_job,
     update_run,
     utc_now,
@@ -82,7 +84,12 @@ def run_worker_loop(
     max_iterations: int | None = None,
 ) -> None:
     iterations = 0
+    next_cleanup_at = 0.0
     while True:
+        if time.monotonic() >= next_cleanup_at:
+            for project_id in {run["project_id"] for run in list_runs(config)}:
+                cleanup_abandoned_uploads(config, project_id)
+            next_cleanup_at = time.monotonic() + 3600
         result = run_worker_once(config, analyze_run)
         if result["status"] == "idle":
             time.sleep(poll_interval_seconds)

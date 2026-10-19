@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import base64
 import json
 import secrets
+import tempfile
 from html import escape
 from urllib.parse import quote
 from urllib.parse import parse_qs
@@ -11,6 +11,8 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
+from starlette.datastructures import UploadFile
 
 from geovis_lm.dashboard.operations import (
     DashboardConfig,
@@ -20,6 +22,16 @@ from geovis_lm.dashboard.operations import (
     authenticate_user,
     create_dashboard_session,
     create_job_record,
+    create_upload_batch,
+    begin_batch_file_transfer,
+    finish_batch_file_transfer,
+    complete_upload_batch,
+    cancel_upload_batch,
+    cleanup_abandoned_uploads,
+    batch_dir,
+    get_upload_batch,
+    ingest_file_paths,
+    upload_error,
     create_project,
     create_report_comment,
     create_run_record,
@@ -42,10 +54,12 @@ from geovis_lm.dashboard.operations import (
     list_projects,
     list_runs,
     list_visible_runs,
+    normalize_filename,
     normalize_workflow_type,
     resolve_workflow_template,
     mime_type_for_path,
     principal_from_request,
+    project_upload_lock,
     public_user,
     moderate_report_comment,
     revoke_project_member,
@@ -72,6 +86,132 @@ CONFIG = DashboardConfig.from_env()
 ensure_storage(CONFIG)
 
 app = FastAPI(title="GeoVisLM Dashboard", version="0.2.0")
+
+BATCH_UPLOAD_SCRIPT = """
+<script>
+(() => {
+  const form = document.querySelector('#batch-upload');
+  if (!form) return;
+  const picker = form.querySelector('input[type=file]');
+  const button = form.querySelector('button');
+  const progress = form.querySelector('progress');
+  const message = form.querySelector('[role=status]');
+  const results = form.querySelector('#upload-results');
+  const cancelButton = form.querySelector('#cancel-upload');
+  const base = form.dataset.api;
+  const storageKey = `geovis-upload:${base}`;
+  let active = null;
+  try { active = JSON.parse(localStorage.getItem(storageKey) || 'null'); } catch { localStorage.removeItem(storageKey); }
+  const remember = (value) => {
+    active = value;
+    if (value) localStorage.setItem(storageKey, JSON.stringify(value));
+    else localStorage.removeItem(storageKey);
+    cancelButton.hidden = !value;
+  };
+  if (active) {
+    cancelButton.hidden = false;
+    message.textContent = 'An unfinished upload is available. Select the same files and submit to resume, or cancel it.';
+  }
+  const explain = (body) => body?.detail?.error_message || body?.error_message || 'Upload failed';
+  cancelButton.addEventListener('click', async () => {
+    if (!active) return;
+    cancelButton.disabled = true;
+    try {
+      const response = await fetch(`${base}/batches/${active.batchId}`, {method: 'DELETE'});
+      if (!response.ok && response.status !== 404) throw new Error(explain(await response.json()));
+      remember(null);
+      message.textContent = 'Upload canceled. Its staged files and unused quota were released.';
+    } catch (error) {
+      message.textContent = error.message;
+    } finally {
+      cancelButton.disabled = false;
+    }
+  });
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const files = Array.from(picker.files);
+    if (!files.length) return;
+    button.disabled = true;
+    progress.value = 0;
+    results.replaceChildren();
+    const total = files.reduce((sum, file) => sum + file.size, 0);
+    const signature = JSON.stringify(files.map(file => [file.name, file.size]));
+    if (files.length > Number(form.dataset.maxFiles) || files.some(file => file.size > Number(form.dataset.maxFile)) || total > Number(form.dataset.maxBatch)) {
+      message.textContent = 'Selection exceeds a file, batch, or file count limit shown above.';
+      button.disabled = false;
+      return;
+    }
+    try {
+      if (active && active.signature !== signature) {
+        throw new Error('Select the same files to resume, or cancel the unfinished upload first.');
+      }
+      let batch;
+      if (active) {
+        message.textContent = 'Resuming upload…';
+        const response = await fetch(`${base}/batches/${active.batchId}`);
+        if (!response.ok) throw new Error(explain(await response.json()));
+        batch = await response.json();
+      } else {
+        message.textContent = 'Creating upload batch…';
+        const created = await fetch(base + '/batches', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({files: files.map(file => ({filename: file.name, size_bytes: file.size, content_type: file.type || null}))})
+        });
+        batch = await created.json();
+        if (!created.ok) throw new Error(explain(batch));
+        remember({batchId: batch.batch_id, signature});
+      }
+      if (batch.status === 'failed') throw new Error('This batch failed validation. Cancel it, then start a new upload.');
+      let finished = 0;
+      for (const [index, file] of files.entries()) {
+        if (batch.files[index].status === 'uploaded') {
+          finished += file.size;
+          progress.value = total ? Math.round(100 * finished / total) : 100;
+          continue;
+        }
+        message.textContent = `Uploading ${file.name} (${index + 1}/${files.length})`;
+        await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('PUT', `${base}/batches/${batch.batch_id}/files/${index}`);
+          xhr.upload.onprogress = (event) => {
+            if (event.lengthComputable) progress.value = total ? Math.round(100 * (finished + event.loaded) / total) : 100;
+          };
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) resolve();
+            else {
+              let body;
+              try { body = JSON.parse(xhr.responseText); } catch { body = {}; }
+              reject(new Error(`${file.name}: ${explain(body)}`));
+            }
+          };
+          xhr.onerror = () => reject(new Error(`${file.name}: network error`));
+          xhr.send(file);
+        });
+        finished += file.size;
+        progress.value = total ? Math.round(100 * finished / total) : 100;
+      }
+      message.textContent = 'Validating files…';
+      const completed = await fetch(`${base}/batches/${batch.batch_id}/complete`, {method: 'POST'});
+      const outcome = await completed.json();
+      if (!completed.ok) throw new Error(explain(outcome));
+      remember(null);
+      message.textContent = `Batch ${outcome.batch_status}. ${outcome.files.length} file(s) checked.`;
+      for (const record of outcome.files) {
+        const row = document.createElement('li');
+        const errors = (record.validation_errors || []).map(error => error.error_message);
+        const warnings = (record.warnings || []).map(warning => warning.message);
+        row.textContent = `${record.original_filename}: ${record.status}${[...errors, ...warnings].length ? ' — ' + [...errors, ...warnings].join('; ') : ''}`;
+        results.append(row);
+      }
+    } catch (error) {
+      message.textContent = error.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
+})();
+</script>
+"""
 
 
 AUTH_PAGE_STYLE = """
@@ -425,6 +565,16 @@ class BatchUploadPayload(BaseModel):
     files: list[UploadFilePayload]
 
 
+class StagedFilePayload(BaseModel):
+    filename: str
+    size_bytes: int
+    content_type: str | None = None
+
+
+class StagedBatchPayload(BaseModel):
+    files: list[StagedFilePayload]
+
+
 class SignupPayload(BaseModel):
     email: str
     password: str = Field(min_length=12)
@@ -699,7 +849,12 @@ def project_for_run(run: dict) -> dict:
 
 
 def run_analysis_workflow(run_id: str) -> dict:
-  metadata = get_run(CONFIG, run_id)
+  initial = get_run(CONFIG, run_id)
+  with project_upload_lock(CONFIG, initial["project_id"]):
+    metadata = get_run(CONFIG, run_id)
+    if metadata["status"] not in {"created", "uploaded", "retrying", "queued"}:
+      raise upload_error("run_not_ready", "Analysis cannot start from this state")
+    metadata = update_run(CONFIG, run_id, status="running", status_message="Analysis started")
   workflow_type = normalize_workflow_type(metadata.get("workflow_type", "terrain"))
   template = resolve_workflow_template(workflow_type)
 
@@ -729,20 +884,31 @@ def run_analysis_workflow(run_id: str) -> dict:
       retryable=True,
     )
 
+  missing_crs_inputs = [
+    item.get("stored_filename") or item.get("original_filename") or "Shapefile"
+    for item in metadata.get("inputs", [])
+    if item.get("status") == "valid"
+    and item.get("extension") == ".shp"
+    and not item.get("metadata", {}).get("crs")
+  ]
+  if missing_crs_inputs:
+    return update_run(
+      CONFIG,
+      run_id,
+      workflow_type=workflow_type,
+      status="failed",
+      status_message="Shapefile CRS is missing",
+      error_code="missing_crs",
+      error_message=f"Upload a .prj with {', '.join(missing_crs_inputs)} in a new analysis before running this workflow",
+      retryable=False,
+    )
+
   workflow_labels = {
     "terrain": "Terrain analysis",
     "flood_risk": "Flood risk analysis",
     "wildfire_risk": "Wildfire risk analysis",
   }
   workflow_label = workflow_labels.get(workflow_type, "Terrain analysis")
-  update_run(
-    CONFIG,
-    run_id,
-    workflow_type=workflow_type,
-    status="running",
-    status_message=f"{workflow_label} started",
-  )
-
   try:
     vector_paths = valid_vector_inputs(metadata)
     if workflow_type == "flood_risk":
@@ -961,13 +1127,131 @@ def list_project_runs(project_id: str, request: Request) -> dict:
 
 @app.post("/api/projects/{project_id}/runs/{run_id}/files")
 def upload_project_run_files(project_id: str, run_id: str, payload: BatchUploadPayload, request: Request) -> dict:
+    run = authorized_upload_run(project_id, run_id, request)
+    return ingest_base64_files(CONFIG, run, [item.model_dump() for item in payload.files])
+
+
+@app.post("/api/projects/{project_id}/runs/{run_id}/files/multipart")
+async def upload_project_run_multipart(project_id: str, run_id: str, request: Request) -> dict:
+    run = authorized_upload_run(project_id, run_id, request)
+    wire_limit = CONFIG.max_upload_batch_bytes + 1024 * 1024
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            declared_length = int(content_length)
+        except ValueError as exc:
+            raise upload_error("invalid_upload", "Content-Length must be an integer") from exc
+        if declared_length > wire_limit:
+            raise upload_error("batch_too_large", f"Batch exceeds the {CONFIG.max_upload_batch_bytes} byte limit", status=413)
+    received = 0
+
+    async def bounded_receive():
+        nonlocal received
+        message = await request.receive()
+        received += len(message.get("body", b""))
+        if received > wire_limit:
+            raise upload_error("batch_too_large", f"Batch exceeds the {CONFIG.max_upload_batch_bytes} byte limit", status=413)
+        return message
+
+    limited_request = Request(request.scope, receive=bounded_receive)
+    async with limited_request.form(max_files=CONFIG.max_batch_files + 1) as form:
+        uploads = form.getlist("files")
+        if not uploads or len(uploads) > CONFIG.max_batch_files or any(not isinstance(item, UploadFile) for item in uploads):
+            raise upload_error("invalid_upload", f"Send 1 to {CONFIG.max_batch_files} file parts named files")
+        with tempfile.TemporaryDirectory(dir=run_dir(CONFIG, run_id)) as temporary:
+            paths = []
+            total_size = 0
+            for index, upload in enumerate(uploads):
+                name = normalize_filename(upload.filename or "")
+                if upload.size is not None and upload.size > CONFIG.max_upload_file_bytes:
+                    raise upload_error("file_too_large", f"{name} exceeds the {CONFIG.max_upload_file_bytes} byte file limit", name, 413)
+                destination = Path(temporary) / str(index)
+                size = 0
+                with destination.open("wb") as handle:
+                    while chunk := await upload.read(1024 * 1024):
+                        size += len(chunk)
+                        total_size += len(chunk)
+                        if size > CONFIG.max_upload_file_bytes:
+                            raise upload_error("file_too_large", f"{name} exceeds the {CONFIG.max_upload_file_bytes} byte file limit", name, 413)
+                        if total_size > CONFIG.max_upload_batch_bytes:
+                            raise upload_error("batch_too_large", f"Batch exceeds the {CONFIG.max_upload_batch_bytes} byte limit", status=413)
+                        handle.write(chunk)
+                paths.append((upload.filename or name, destination, upload.content_type))
+            return await run_in_threadpool(ingest_file_paths, CONFIG, run, paths)
+
+
+def authorized_upload_run(project_id: str, run_id: str, request: Request, *, require_editable: bool = True) -> dict:
     principal = principal_from_request(request, CONFIG)
     project = get_project(CONFIG, project_id)
     assert_project_access(CONFIG, project, principal, "upload")
     run = get_run(CONFIG, run_id)
     if run["project_id"] != project_id:
         raise HTTPException(status_code=404, detail="Run not found")
-    return ingest_base64_files(CONFIG, run, [item.model_dump() for item in payload.files])
+    if require_editable and run["status"] not in {"created", "uploaded", "retrying"}:
+        raise upload_error("run_not_editable", "Uploads are closed for this analysis")
+    return run
+
+
+@app.post("/api/projects/{project_id}/runs/{run_id}/batches")
+def begin_upload_batch(project_id: str, run_id: str, payload: StagedBatchPayload, request: Request) -> dict:
+    run = authorized_upload_run(project_id, run_id, request)
+    cleanup_abandoned_uploads(CONFIG, project_id)
+    return create_upload_batch(CONFIG, run, [item.model_dump() for item in payload.files])
+
+
+@app.get("/api/projects/{project_id}/runs/{run_id}/batches/{batch_id}")
+def upload_batch_status(project_id: str, run_id: str, batch_id: str, request: Request) -> dict:
+    principal = principal_from_request(request, CONFIG)
+    project = get_project(CONFIG, project_id)
+    assert_project_access(CONFIG, project, principal, "view")
+    run = get_run(CONFIG, run_id)
+    if run["project_id"] != project_id:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return get_upload_batch(CONFIG, run_id, batch_id)
+
+
+@app.put("/api/projects/{project_id}/runs/{run_id}/batches/{batch_id}/files/{file_index}")
+async def stage_upload_file(project_id: str, run_id: str, batch_id: str, file_index: int, request: Request) -> dict:
+    authorized_upload_run(project_id, run_id, request)
+    item = await run_in_threadpool(begin_batch_file_transfer, CONFIG, project_id, run_id, batch_id, file_index)
+    if item["status"] == "uploaded":
+        return {"batch_id": batch_id, "filename": item["filename"], "status": "uploaded", "bytes_uploaded": item["size_bytes"]}
+    destination = batch_dir(CONFIG, run_id, batch_id) / item["filename"]
+    temporary = destination.with_name(destination.name + ".part")
+    received = 0
+    try:
+        with temporary.open("wb") as handle:
+            async for chunk in request.stream():
+                received += len(chunk)
+                if received > item["size_bytes"] or received > CONFIG.max_upload_file_bytes:
+                    raise upload_error("file_too_large", f"{item['filename']} exceeds its declared size or file limit", item["filename"], 413)
+                handle.write(chunk)
+        if received != item["size_bytes"]:
+            raise upload_error("size_mismatch", f"{item['filename']} uploaded {received} of {item['size_bytes']} declared bytes", item["filename"])
+        temporary.replace(destination)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        finish_batch_file_transfer(CONFIG, project_id, run_id, batch_id, file_index, "pending")
+        raise
+    await run_in_threadpool(finish_batch_file_transfer, CONFIG, project_id, run_id, batch_id, file_index, "uploaded")
+    return {"batch_id": batch_id, "filename": item["filename"], "status": "uploaded", "bytes_uploaded": received}
+
+
+@app.post("/api/projects/{project_id}/runs/{run_id}/batches/{batch_id}/complete")
+def finalize_upload_batch(project_id: str, run_id: str, batch_id: str, request: Request) -> dict:
+    run = authorized_upload_run(project_id, run_id, request, require_editable=False)
+    return complete_upload_batch(CONFIG, run, batch_id)
+
+
+@app.delete("/api/projects/{project_id}/runs/{run_id}/batches/{batch_id}")
+def cancel_staged_upload_batch(project_id: str, run_id: str, batch_id: str, request: Request) -> dict:
+    principal = principal_from_request(request, CONFIG)
+    project = get_project(CONFIG, project_id)
+    assert_project_access(CONFIG, project, principal, "upload")
+    run = get_run(CONFIG, run_id)
+    if run["project_id"] != project_id:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return cancel_upload_batch(CONFIG, run, batch_id)
 
 
 @app.post("/api/runs/{run_id}/queue")
@@ -976,8 +1260,12 @@ def queue_run(run_id: str, request: Request) -> dict:
     run = get_run(CONFIG, run_id)
     project = project_for_run(run)
     assert_project_access(CONFIG, project, principal, "analyze")
-    queued = update_run(CONFIG, run_id, status="queued", status_message="Analysis queued")
-    job = create_job_record(CONFIG, queued, principal["user_id"])
+    with project_upload_lock(CONFIG, project["id"]):
+        run = get_run(CONFIG, run_id)
+        if run["status"] not in {"created", "uploaded", "retrying"}:
+            raise upload_error("run_not_ready", "Analysis cannot be queued from this state")
+        queued = update_run(CONFIG, run_id, status="queued", status_message="Analysis queued")
+        job = create_job_record(CONFIG, queued, principal["user_id"])
     queued["job"] = job
     return queued
 
@@ -1096,9 +1384,11 @@ def cancel_run(run_id: str, request: Request) -> dict:
     run = get_run(CONFIG, run_id)
     project = project_for_run(run)
     assert_project_access(CONFIG, project, principal, "cancel")
-    if run["status"] not in {"created", "queued", "running"}:
-        raise HTTPException(status_code=400, detail="Only created, queued, or running runs can be canceled")
-    return update_run(CONFIG, run_id, status="canceled", status_message="Run canceled")
+    with project_upload_lock(CONFIG, project["id"]):
+        run = get_run(CONFIG, run_id)
+        if run["status"] not in {"created", "queued", "running"}:
+            raise HTTPException(status_code=400, detail="Only created, queued, or running runs can be canceled")
+        return update_run(CONFIG, run_id, status="canceled", status_message="Run canceled")
 
 
 @app.post("/api/runs/{run_id}/report")
@@ -1286,7 +1576,12 @@ def project_page(project_id: str, request: Request) -> str:
     <h1>{escape(project['name'])}</h1>
     <p>{escape(project.get('description', ''))}</p>
     <form method="post" action="/dashboard/projects/{project_id}/runs">
-      <input name="name" placeholder="Run name">
+      <label>Analysis name<input name="name" placeholder="Run name" required></label>
+      <label>Workflow<select name="workflow_type">
+        <option value="terrain">Terrain analysis</option>
+        <option value="flood_risk">Flood risk</option>
+        <option value="wildfire_risk">Wildfire risk</option>
+      </select></label>
       <button>New analysis</button>
     </form>
     <h2>Runs</h2>
@@ -1351,7 +1646,7 @@ def run_page(run_id: str, request: Request) -> str:
         f"<td><code>{escape(item.get('status') or '')}</code></td>"
         f"<td>{escape(item.get('file_type') or '')}</td>"
         f"<td>{item.get('size_bytes') or 0}</td>"
-        f"<td>{escape('; '.join(error.get('error_message', '') for error in item.get('validation_errors', [])))}</td>"
+        f"<td>{escape('; '.join([error.get('error_message', '') for error in item.get('validation_errors', [])] + [warning.get('message', '') for warning in item.get('warnings', [])]))}</td>"
         "</tr>"
         for item in run.get("inputs", [])
     ]
@@ -1380,12 +1675,17 @@ def run_page(run_id: str, request: Request) -> str:
     if run.get("status") in {"created", "uploaded", "retrying"}:
         upload_form = f"""
     <h2>Upload Input</h2>
-    <form method="post" action="/dashboard/projects/{run['project_id']}/runs/{run_id}/files" class="upload-form">
-      <label>Filename<input name="filename" placeholder="sample_dem.tif" required></label>
-      <label>MIME type<input name="content_type" placeholder="image/tiff"></label>
-      <label>Base64 content<textarea name="content_b64" rows="5" required></textarea></label>
-      <button>Upload input</button>
+    <p>Select datasets together. For a Shapefile, select its .shp, .shx, and .dbf files (and .prj when available) in one batch.</p>
+    <p>Limits: {CONFIG.max_upload_file_bytes // (1024 * 1024)} MB per file; {CONFIG.max_upload_batch_bytes // (1024 * 1024)} MB per batch; {CONFIG.max_batch_files} files per batch; {CONFIG.max_project_bytes // (1024 * 1024)} MB per project.</p>
+    <form id="batch-upload" class="upload-form" data-api="/api/projects/{run['project_id']}/runs/{run_id}" data-max-file="{CONFIG.max_upload_file_bytes}" data-max-batch="{CONFIG.max_upload_batch_bytes}" data-max-files="{CONFIG.max_batch_files}">
+      <label>Choose files<input type="file" name="files" multiple accept=".tif,.tiff,.geojson,.json,.csv,.shp,.shx,.dbf,.prj,.cpg,.qix,.sbn,.sbx,.xml" required></label>
+      <button type="submit">Upload and validate</button>
+      <button type="button" id="cancel-upload" hidden>Cancel upload</button>
+      <progress max="100" value="0" aria-label="Upload progress"></progress>
+      <p role="status" aria-live="polite">No upload started.</p>
+      <ul id="upload-results"></ul>
     </form>
+    {BATCH_UPLOAD_SCRIPT}
 """
     recommendation = run.get("recommendation")
     recommendation_markup = ""
@@ -1445,7 +1745,7 @@ def run_page(run_id: str, request: Request) -> str:
     {recommendation_markup}
     <h2>Inputs</h2>
     <table>
-      <thead><tr><th>File</th><th>Status</th><th>Type</th><th>Bytes</th><th>Errors</th></tr></thead>
+      <thead><tr><th>File</th><th>Status</th><th>Type</th><th>Bytes</th><th>Validation feedback</th></tr></thead>
       <tbody>{''.join(inputs) or "<tr><td colspan='5'>No inputs yet</td></tr>"}</tbody>
     </table>
     <h2>Jobs</h2>
@@ -1532,7 +1832,11 @@ async def create_run_form(project_id: str, request: Request) -> HTMLResponse:
     principal = principal_from_request(request, CONFIG)
     project = get_project(CONFIG, project_id)
     assert_project_access(CONFIG, project, principal, "create_run")
-    run = create_run_record(CONFIG, project, principal["user_id"], name=form.get("name", ["Terrain Run"])[0])
+    run = create_run_record(
+        CONFIG, project, principal["user_id"],
+        name=form.get("name", ["Terrain Run"])[0],
+        workflow_type=form.get("workflow_type", ["terrain"])[0],
+    )
     return HTMLResponse(f"<meta http-equiv='refresh' content='0; url=/runs/{run['run_id']}'>")
 
 
@@ -1578,12 +1882,17 @@ async def upload_dem_compat(
     run = get_run(CONFIG, run_id)
     project = project_for_run(run)
     assert_project_access(CONFIG, project, principal, "upload")
-
-    chunks = []
-    async for chunk in request.stream():
-        chunks.append(chunk)
-    content_b64 = base64.b64encode(b"".join(chunks)).decode("ascii")
-    return ingest_base64_files(CONFIG, run, [{"filename": filename, "content_b64": content_b64}])["run"]
+    normalized = normalize_filename(filename)
+    with tempfile.TemporaryDirectory(dir=run_dir(CONFIG, run_id)) as temporary:
+        path = Path(temporary) / normalized
+        received = 0
+        with path.open("wb") as handle:
+            async for chunk in request.stream():
+                received += len(chunk)
+                if received > CONFIG.max_upload_file_bytes:
+                    raise upload_error("file_too_large", f"{normalized} exceeds the {CONFIG.max_upload_file_bytes} byte file limit", normalized, 413)
+                handle.write(chunk)
+        return (await run_in_threadpool(ingest_file_paths, CONFIG, run, [(filename, path, request.headers.get("content-type"))]))["run"]
 
 
 def copy_sample_dem_to_run_compat(run_id: str, sample_dem: Path = Path("data/sample/sample_dem.tif")) -> dict:

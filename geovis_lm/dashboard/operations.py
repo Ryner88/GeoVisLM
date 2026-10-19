@@ -10,6 +10,9 @@ import os
 import re
 import secrets
 import shutil
+import fcntl
+import tempfile
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -183,6 +186,7 @@ class DashboardConfig:
     max_upload_file_bytes: int
     max_upload_batch_bytes: int
     max_batch_files: int
+    max_project_bytes: int
     require_auth: bool
     auth_token: str | None
     session_secret: str | None
@@ -196,11 +200,16 @@ class DashboardConfig:
         output_root = Path(os.getenv("GEOVIS_OUTPUT_ROOT", "outputs"))
         file_mb = env_int("GEOVIS_MAX_UPLOAD_FILE_MB", 250)
         batch_mb = env_int("GEOVIS_MAX_UPLOAD_BATCH_MB", 1024)
+        project_mb = env_int("GEOVIS_MAX_PROJECT_MB", 5120)
+        batch_files = env_int("GEOVIS_MAX_BATCH_FILES", 50)
+        if min(file_mb, batch_mb, project_mb, batch_files) <= 0:
+            raise RuntimeError("Upload size limits must be positive")
         return cls(
             output_root=output_root,
             max_upload_file_bytes=file_mb * 1024 * 1024,
             max_upload_batch_bytes=batch_mb * 1024 * 1024,
-            max_batch_files=env_int("GEOVIS_MAX_BATCH_FILES", 50),
+            max_batch_files=batch_files,
+            max_project_bytes=project_mb * 1024 * 1024,
             require_auth=env_bool("GEOVIS_REQUIRE_AUTH", False),
             auth_token=os.getenv("GEOVIS_AUTH_TOKEN"),
             session_secret=os.getenv("GEOVIS_SESSION_SECRET") or os.getenv("GEOVIS_SECRET_KEY"),
@@ -1377,29 +1386,166 @@ def validate_file_content(path: Path, extension: str) -> dict[str, Any]:
     return {}
 
 
-def validate_shapefile_bundle(file_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    by_stem: dict[str, set[str]] = {}
-    for record in file_records:
-        suffix = record["extension"]
-        if suffix in {".shp", ".shx", ".dbf", ".prj", ".cpg", ".qix", ".sbn", ".sbx", ".xml"}:
-            by_stem.setdefault(Path(record["stored_filename"]).stem, set()).add(suffix)
+SHAPEFILE_EXTENSIONS = {".shp", ".shx", ".dbf", ".prj", ".cpg", ".qix", ".sbn", ".sbx", ".xml"}
 
+
+def upload_error(code: str, message: str, filename: str | None = None, status: int = 400) -> HTTPException:
+    detail = {"error_code": code, "error_message": message}
+    if filename:
+        detail["filename"] = filename
+    return HTTPException(status_code=status, detail=detail)
+
+
+@contextmanager
+def project_upload_lock(config: DashboardConfig, project_id: str):
+    lock_path = project_dir(config, project_id) / "upload.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+b") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def project_upload_bytes(config: DashboardConfig, project_id: str) -> int:
+    total = 0
+    for run in list_runs(config, project_id):
+        for record in run.get("inputs", []):
+            if record.get("path") and Path(record["path"]).is_file():
+                total += int(record.get("size_bytes") or 0)
+        staging = run_dir(config, run["run_id"]) / "inputs" / "staging"
+        if staging.exists():
+            for directory in staging.iterdir():
+                manifest = directory / "batch.json"
+                if not manifest.is_file():
+                    continue
+                try:
+                    batch = json.loads(manifest.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    total += sum(path.stat().st_size for path in directory.iterdir() if path.is_file() and path != manifest)
+                    continue
+                if batch.get("status") in {"created", "uploading", "validating"}:
+                    total += sum(int(item["size_bytes"]) for item in batch.get("files", []))
+                elif batch.get("status") == "interrupted":
+                    total += sum(int(item["size_bytes"]) for item in batch.get("files", []) if item["status"] in {"uploaded", "receiving"})
+    return total
+
+
+def validate_shapefile_bundle(file_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_stem: dict[str, dict[str, dict[str, Any]]] = {}
     for record in file_records:
-        if record["extension"] != ".shp":
-            continue
-        stem = Path(record["stored_filename"]).stem
-        missing = sorted(SHAPEFILE_REQUIRED - by_stem.get(stem, set()))
+        if record["extension"] in SHAPEFILE_EXTENSIONS:
+            by_stem.setdefault(Path(record["stored_filename"]).stem.lower(), {})[record["extension"]] = record
+    for stem, parts in by_stem.items():
+        missing = sorted(SHAPEFILE_REQUIRED - parts.keys())
         if missing:
-            record["status"] = "invalid"
-            record["validation_errors"].append(
-                {
+            for record in parts.values():
+                record["status"] = "invalid"
+                record["validation_errors"].append({
                     "error_code": "missing_shapefile_component",
-                    "error_message": f"Missing Shapefile components for {stem}: {', '.join(missing)}",
-                }
-            )
-        elif ".prj" not in by_stem.get(stem, set()):
-            record["warnings"].append({"warning_code": "missing_crs", "message": "Shapefile .prj file is recommended"})
+                    "error_message": f"{record['stored_filename']}: add {', '.join(missing)} for Shapefile bundle {stem}",
+                })
+        elif ".prj" not in parts:
+            for record in parts.values():
+                record["warnings"].append({"warning_code": "missing_crs", "message": f"{stem}.prj is recommended; assign a CRS before analysis"})
     return file_records
+
+
+def ingest_file_paths(config: DashboardConfig, run: dict[str, Any], paths: list[tuple[str, Path, str | None]], *, staged_bytes: int = 0, lock_held: bool = False) -> dict[str, Any]:
+    if not paths:
+        raise upload_error("empty_batch", "Select at least one file")
+    if len(paths) > config.max_batch_files:
+        raise upload_error("too_many_files", f"Maximum files per batch is {config.max_batch_files}", status=413)
+    names = [normalize_filename(name) for name, _, _ in paths]
+    if len(set(name.lower() for name in names)) != len(names):
+        raise upload_error("duplicate_filename", "File names in a batch must be unique")
+    existing_names = {item.get("stored_filename", "").lower() for item in run.get("inputs", [])}
+    if any(name.lower() in existing_names for name in names):
+        raise upload_error("duplicate_filename", "A file with this name is already in the run; create a new run to replace it")
+    sizes = [path.stat().st_size for _, path, _ in paths]
+    for name, size in zip(names, sizes):
+        if Path(name).suffix.lower() not in ALLOWED_EXTENSIONS:
+            raise upload_error("unsupported_file_type", f"Unsupported file extension for {name}", name)
+        if size > config.max_upload_file_bytes:
+            raise upload_error("file_too_large", f"{name} exceeds the {config.max_upload_file_bytes} byte file limit", name, 413)
+    if sum(sizes) > config.max_upload_batch_bytes:
+        raise upload_error("batch_too_large", f"Batch exceeds the {config.max_upload_batch_bytes} byte limit", status=413)
+    with nullcontext() if lock_held else project_upload_lock(config, run["project_id"]):
+        run = get_run(config, run["run_id"])
+        if run["status"] not in {"created", "uploaded", "retrying"}:
+            raise upload_error("run_not_editable", "Uploads are closed for this analysis")
+        current_names = {item.get("stored_filename", "").lower() for item in run.get("inputs", [])}
+        if any(name.lower() in current_names for name in names):
+            raise upload_error("duplicate_filename", "A file with this name is already in the run; create a new run to replace it")
+        if project_upload_bytes(config, run["project_id"]) - staged_bytes + sum(sizes) > config.max_project_bytes:
+            raise upload_error("project_quota_exceeded", f"Project upload quota is {config.max_project_bytes} bytes", status=413)
+        raw_dir = run_dir(config, run["run_id"]) / "inputs" / "raw"
+        validated_dir = run_dir(config, run["run_id"]) / "inputs" / "validated"
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        validated_dir.mkdir(parents=True, exist_ok=True)
+        records = []
+        try:
+            for (original, source, content_type), name, size in zip(paths, names, sizes):
+                extension = Path(name).suffix.lower()
+                raw_path = ensure_child_path(raw_dir, raw_dir / name)
+                shutil.copyfile(source, raw_path)
+                record = {
+                    "id": uuid4().hex, "project_id": run["project_id"], "run_id": run["run_id"],
+                    "role": "input", "file_type": file_type_from_extension(extension),
+                    "dataset_id": Path(name).stem.lower() if extension in SHAPEFILE_EXTENSIONS else uuid4().hex,
+                    "original_filename": original, "stored_filename": name, "extension": extension,
+                    "content_type": content_type, "path": str(raw_path), "size_bytes": size,
+                    "checksum_sha256": checksum_sha256(raw_path), "status": "validating",
+                    "validation_errors": [], "warnings": [], "metadata": {},
+                    "created_at": utc_now(), "updated_at": utc_now(),
+                }
+                records.append(record)
+        except Exception:
+            for name in names:
+                (raw_dir / name).unlink(missing_ok=True)
+            raise
+        try:
+            validate_shapefile_bundle(records)
+            for record in records:
+                raw_path = Path(record["path"])
+                extension = record["extension"]
+                try:
+                    if record["status"] != "invalid":
+                        record["metadata"] = validate_file_content(raw_path, extension)
+                        if record["metadata"].get("crs") is None and extension in {".tif", ".tiff", ".geojson", ".json", ".shp"}:
+                            record["warnings"].append({"warning_code": "missing_crs", "message": "CRS is missing; assign a CRS before analysis"})
+                        record["status"] = "valid"
+                except HTTPException as exc:
+                    record["status"] = "invalid"
+                    record["validation_errors"].append({
+                        **exc.detail, "filename": record["stored_filename"],
+                        "validation_stage": "content", "retryable": False,
+                    })
+                record["updated_at"] = utc_now()
+            # A bundle is one dataset: one corrupt component invalidates all its siblings.
+            invalid_stems = {Path(item["stored_filename"]).stem.lower() for item in records if item["extension"] in SHAPEFILE_EXTENSIONS and item["status"] == "invalid"}
+            for record in records:
+                if record["extension"] in SHAPEFILE_EXTENSIONS and Path(record["stored_filename"]).stem.lower() in invalid_stems and record["status"] == "valid":
+                    record["status"] = "invalid"
+                    record["validation_errors"].append({"error_code": "invalid_shapefile_bundle", "error_message": f"{record['stored_filename']}: another bundle component failed validation"})
+            for record in records:
+                raw_path = Path(record["path"])
+                if record["status"] == "invalid":
+                    raw_path.unlink(missing_ok=True)
+                    record["path"] = None
+                else:
+                    validated_path = ensure_child_path(validated_dir, validated_dir / record["stored_filename"])
+                    shutil.move(raw_path, validated_path)
+                    record["path"] = str(validated_path)
+            run = update_run(config, run["run_id"], status="uploaded", status_message="Files validated", inputs=run.get("inputs", []) + records)
+        except Exception:
+            for name in names:
+                (raw_dir / name).unlink(missing_ok=True)
+                (validated_dir / name).unlink(missing_ok=True)
+            raise
+    batch_status = "valid" if all(record["status"] == "valid" for record in records) else "completed_with_errors"
+    return {"run_id": run["run_id"], "batch_status": batch_status, "files": records, "run": run}
 
 
 def ingest_base64_files(
@@ -1408,73 +1554,169 @@ def ingest_base64_files(
     uploads: list[dict[str, str]],
 ) -> dict[str, Any]:
     if len(uploads) > config.max_batch_files:
-        raise HTTPException(status_code=413, detail={"error_code": "too_many_files", "error_message": f"Maximum files per batch is {config.max_batch_files}"})
+        raise upload_error("too_many_files", f"Maximum files per batch is {config.max_batch_files}", status=413)
+    with tempfile.TemporaryDirectory(dir=run_dir(config, run["run_id"])) as temporary:
+        paths = []
+        total_size = 0
+        for index, upload in enumerate(uploads):
+            name = normalize_filename(upload.get("filename", ""))
+            if Path(name).suffix.lower() not in ALLOWED_EXTENSIONS:
+                raise upload_error("unsupported_file_type", f"Unsupported file extension for {name}", name)
+            content = decode_upload_content(upload.get("content_b64", ""))
+            if len(content) > config.max_upload_file_bytes:
+                raise upload_error("file_too_large", f"{name} exceeds the {config.max_upload_file_bytes} byte file limit", name, 413)
+            total_size += len(content)
+            if total_size > config.max_upload_batch_bytes:
+                raise upload_error("batch_too_large", f"Batch exceeds the {config.max_upload_batch_bytes} byte limit", status=413)
+            path = Path(temporary) / str(index)
+            path.write_bytes(content)
+            paths.append((upload["filename"], path, upload.get("content_type")))
+        return ingest_file_paths(config, run, paths)
 
-    raw_dir = run_dir(config, run["run_id"]) / "inputs" / "raw"
-    validated_dir = run_dir(config, run["run_id"]) / "inputs" / "validated"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    validated_dir.mkdir(parents=True, exist_ok=True)
 
-    decoded: list[tuple[dict[str, str], str, bytes]] = []
-    total_size = 0
-    for upload in uploads:
-        stored_filename = normalize_filename(upload.get("filename", ""))
-        extension = Path(stored_filename).suffix.lower()
-        if extension not in ALLOWED_EXTENSIONS:
-            raise HTTPException(status_code=400, detail={"error_code": "unsupported_file_type", "error_message": f"Unsupported file extension: {extension}"})
-        content = decode_upload_content(upload.get("content_b64", ""))
-        if len(content) > config.max_upload_file_bytes:
-            raise HTTPException(status_code=413, detail={"error_code": "file_too_large", "error_message": f"{stored_filename} exceeds the configured file limit"})
-        total_size += len(content)
-        decoded.append((upload, stored_filename, content))
-    if total_size > config.max_upload_batch_bytes:
-        raise HTTPException(status_code=413, detail={"error_code": "batch_too_large", "error_message": "Upload batch exceeds the configured limit"})
+def batch_dir(config: DashboardConfig, run_id: str, batch_id: str) -> Path:
+    return run_dir(config, run_id) / "inputs" / "staging" / safe_id(batch_id, "batch_id")
 
-    records: list[dict[str, Any]] = []
-    for upload, stored_filename, content in decoded:
-        raw_path = ensure_child_path(raw_dir, raw_dir / stored_filename)
-        raw_path.write_bytes(content)
-        extension = raw_path.suffix.lower()
-        checksum = hashlib.sha256(content).hexdigest()
-        record = {
-            "id": uuid4().hex,
-            "project_id": run["project_id"],
-            "run_id": run["run_id"],
-            "role": "input",
-            "file_type": file_type_from_extension(extension),
-            "original_filename": upload.get("filename", stored_filename),
-            "stored_filename": stored_filename,
-            "extension": extension,
-            "content_type": upload.get("content_type"),
-            "path": str(raw_path),
-            "size_bytes": len(content),
-            "checksum_sha256": checksum,
-            "status": "validating",
-            "validation_errors": [],
-            "warnings": [],
-            "metadata": {},
-            "created_at": utc_now(),
-            "updated_at": utc_now(),
-        }
+
+def get_upload_batch(config: DashboardConfig, run_id: str, batch_id: str) -> dict[str, Any]:
+    return read_json(batch_dir(config, run_id, batch_id) / "batch.json", "Upload batch not found")
+
+
+def begin_batch_file_transfer(config: DashboardConfig, project_id: str, run_id: str, batch_id: str, file_index: int) -> dict[str, Any]:
+    with project_upload_lock(config, project_id):
+        batch = get_upload_batch(config, run_id, batch_id)
+        if batch["status"] not in {"created", "uploading", "interrupted"} or file_index < 0 or file_index >= len(batch["files"]):
+            raise upload_error("batch_not_ready", "Batch or file index is not ready")
+        item = batch["files"][file_index]
+        if item["status"] == "pending":
+            if batch["status"] == "interrupted" and project_upload_bytes(config, project_id) + item["size_bytes"] > config.max_project_bytes:
+                raise upload_error("project_quota_exceeded", f"Project upload quota is {config.max_project_bytes} bytes", item["filename"], 413)
+            item["status"] = "receiving"
+            if batch["status"] == "created":
+                batch["status"] = "uploading"
+            batch["updated_at"] = utc_now()
+            write_json(batch_dir(config, run_id, batch_id) / "batch.json", batch)
+        elif item["status"] != "uploaded":
+            raise upload_error("file_uploading", f"{item['filename']} is already being uploaded", item["filename"])
+        return dict(item)
+
+
+def finish_batch_file_transfer(config: DashboardConfig, project_id: str, run_id: str, batch_id: str, file_index: int, status: str) -> None:
+    if status not in {"pending", "uploaded"}:
+        raise ValueError("Invalid transfer status")
+    with project_upload_lock(config, project_id):
+        batch = get_upload_batch(config, run_id, batch_id)
+        if batch["status"] not in {"uploading", "interrupted"} or batch["files"][file_index]["status"] != "receiving":
+            raise upload_error("batch_not_ready", "Batch transfer state changed")
+        batch["files"][file_index]["status"] = status
+        if status == "pending":
+            batch["status"] = "interrupted"
+        batch["updated_at"] = utc_now()
+        write_json(batch_dir(config, run_id, batch_id) / "batch.json", batch)
+
+
+def cleanup_abandoned_uploads(config: DashboardConfig, project_id: str, *, now: datetime | None = None) -> int:
+    now = now or datetime.now(timezone.utc)
+    removed = 0
+    with project_upload_lock(config, project_id):
+        for run in list_runs(config, project_id):
+            staging = run_dir(config, run["run_id"]) / "inputs" / "staging"
+            for directory in staging.iterdir() if staging.exists() else []:
+                if not directory.is_dir():
+                    continue
+                metadata = directory / "batch.json"
+                updated = datetime.fromtimestamp(directory.stat().st_mtime, timezone.utc)
+                if metadata.exists():
+                    try:
+                        updated = datetime.fromisoformat(json.loads(metadata.read_text())["updated_at"])
+                    except (ValueError, KeyError, TypeError):
+                        pass
+                for partial in directory.glob("*.part"):
+                    updated = max(updated, datetime.fromtimestamp(partial.stat().st_mtime, timezone.utc))
+                if now - updated >= timedelta(hours=24):
+                    shutil.rmtree(directory)
+                    removed += 1
+    return removed
+
+
+def create_upload_batch(config: DashboardConfig, run: dict[str, Any], files: list[dict[str, Any]]) -> dict[str, Any]:
+    if not files or len(files) > config.max_batch_files:
+        raise upload_error("too_many_files", f"Select 1 to {config.max_batch_files} files", status=413)
+    names = [normalize_filename(item.get("filename", "")) for item in files]
+    if len({name.lower() for name in names}) != len(names):
+        raise upload_error("duplicate_filename", "File names in a batch must be unique")
+    existing = {item.get("stored_filename", "").lower() for item in run.get("inputs", [])}
+    entries = []
+    total = 0
+    for item, name in zip(files, names):
+        if name.lower() in existing:
+            raise upload_error("duplicate_filename", f"{name} is already in this run", name)
+        if Path(name).suffix.lower() not in ALLOWED_EXTENSIONS:
+            raise upload_error("unsupported_file_type", f"Unsupported file extension for {name}", name)
+        size = item.get("size_bytes")
+        if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+            raise upload_error("invalid_size", f"{name} needs a nonnegative byte size", name)
+        if size > config.max_upload_file_bytes:
+            raise upload_error("file_too_large", f"{name} exceeds the {config.max_upload_file_bytes} byte file limit", name, 413)
+        total += size
+        entries.append({"filename": name, "original_filename": item["filename"], "size_bytes": size, "content_type": item.get("content_type"), "status": "pending"})
+    if total > config.max_upload_batch_bytes:
+        raise upload_error("batch_too_large", f"Batch exceeds the {config.max_upload_batch_bytes} byte limit", status=413)
+    with project_upload_lock(config, run["project_id"]):
+        current_run = get_run(config, run["run_id"])
+        if current_run["status"] not in {"created", "uploaded", "retrying"}:
+            raise upload_error("run_not_editable", "Uploads are closed for this analysis")
+        if project_upload_bytes(config, run["project_id"]) + total > config.max_project_bytes:
+            raise upload_error("project_quota_exceeded", f"Project upload quota is {config.max_project_bytes} bytes", status=413)
+        batch_id = uuid4().hex
+        directory = batch_dir(config, run["run_id"], batch_id)
+        directory.mkdir(parents=True)
+        batch = {"batch_id": batch_id, "run_id": run["run_id"], "project_id": run["project_id"], "status": "created", "files": entries, "created_at": utc_now(), "updated_at": utc_now()}
+        write_json(directory / "batch.json", batch)
+    return batch
+
+
+def complete_upload_batch(config: DashboardConfig, run: dict[str, Any], batch_id: str) -> dict[str, Any]:
+    directory = batch_dir(config, run["run_id"], batch_id)
+    with project_upload_lock(config, run["project_id"]):
+        batch = get_upload_batch(config, run["run_id"], batch_id)
+        if batch["status"] == "completed":
+            return batch["result"]
+        if batch["status"] not in {"created", "uploading", "interrupted"}:
+            raise upload_error("batch_not_ready", "Batch cannot be finalized")
+        missing = [item["filename"] for item in batch["files"] if item["status"] != "uploaded"]
+        if missing:
+            raise upload_error("batch_incomplete", f"Upload these files before validating: {', '.join(missing)}")
+        batch["status"] = "validating"
+        batch["updated_at"] = utc_now()
+        write_json(directory / "batch.json", batch)
+        paths = [(item["original_filename"], directory / item["filename"], item.get("content_type")) for item in batch["files"]]
         try:
-            record["metadata"] = validate_file_content(raw_path, extension)
-            if record["metadata"].get("crs") is None and extension in {".tif", ".tiff", ".geojson", ".json", ".shp"}:
-                record["warnings"].append({"warning_code": "missing_crs", "message": "CRS is missing"})
-            validated_path = ensure_child_path(validated_dir, validated_dir / stored_filename)
-            shutil.copy2(raw_path, validated_path)
-            record["path"] = str(validated_path)
-            record["status"] = "valid"
-        except HTTPException as exc:
-            record["status"] = "invalid"
-            record["validation_errors"].append(exc.detail)
-        record["updated_at"] = utc_now()
-        records.append(record)
+            result = ingest_file_paths(config, run, paths, staged_bytes=sum(item["size_bytes"] for item in batch["files"]), lock_held=True)
+        except Exception:
+            batch["status"] = "failed"
+            batch["updated_at"] = utc_now()
+            write_json(directory / "batch.json", batch)
+            for _, path, _ in paths:
+                path.unlink(missing_ok=True)
+            raise
+        batch["status"] = "completed"
+        batch["updated_at"] = utc_now()
+        batch["result"] = result
+        write_json(directory / "batch.json", batch)
+        for _, path, _ in paths:
+            path.unlink(missing_ok=True)
+        return result
 
-    records = validate_shapefile_bundle(records)
-    existing = run.get("inputs", [])
-    run = update_run(config, run["run_id"], status="uploaded", status_message="Files uploaded", inputs=existing + records)
-    batch_status = "valid" if all(record["status"] == "valid" for record in records) else "completed_with_errors"
-    return {"run_id": run["run_id"], "batch_status": batch_status, "files": records, "run": run}
+
+def cancel_upload_batch(config: DashboardConfig, run: dict[str, Any], batch_id: str) -> dict[str, str]:
+    with project_upload_lock(config, run["project_id"]):
+        directory = batch_dir(config, run["run_id"], batch_id)
+        batch = get_upload_batch(config, run["run_id"], batch_id)
+        if batch["status"] == "completed":
+            raise upload_error("batch_completed", "Completed uploads cannot be canceled")
+        shutil.rmtree(directory)
+        return {"batch_id": batch_id, "status": "canceled"}
 
 
 def first_valid_dem(run: dict[str, Any]) -> Path | None:
