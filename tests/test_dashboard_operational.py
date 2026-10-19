@@ -1278,6 +1278,38 @@ def test_staged_upload_quota_authorization_and_cleanup(app_module, tmp_path):
     assert not directory.exists()
 
 
+def test_staged_batch_metadata_is_bounded_before_json_parsing(app_module):
+    project, run = create_project_and_run(app_module.app)
+    base = f"/api/projects/{project['id']}/runs/{run['run_id']}/batches"
+    oversized = request(
+        app_module.app,
+        "post",
+        base,
+        headers={**auth(), "content-type": "application/json"},
+        content=b'{"files":[],"padding":"' + b"x" * (64 * 1024) + b'"}',
+    )
+    assert oversized.status_code == 413
+    assert oversized.json()["detail"]["error_code"] == "batch_metadata_too_large"
+
+    long_filename = request(
+        app_module.app,
+        "post",
+        base,
+        headers=auth(),
+        json={"files": [{"filename": "a" * 256 + ".csv", "size_bytes": 1}]},
+    )
+    assert long_filename.status_code == 422
+
+    too_many = request(
+        app_module.app,
+        "post",
+        base,
+        headers=auth(),
+        json={"files": [{"filename": f"{index}.csv", "size_bytes": 1} for index in range(51)]},
+    )
+    assert too_many.status_code == 422
+
+
 def test_interrupted_batch_releases_unused_quota_and_can_resume_or_cancel(app_module):
     from dataclasses import replace
 

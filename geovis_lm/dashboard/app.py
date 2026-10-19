@@ -583,14 +583,14 @@ class BatchUploadPayload(BaseModel):
 
 
 class StagedFilePayload(BaseModel):
-    filename: str
-    size_bytes: int
-    content_type: str | None = None
+    filename: str = Field(min_length=1, max_length=255)
+    size_bytes: int = Field(ge=0)
+    content_type: str | None = Field(default=None, max_length=255)
 
 
 class StagedBatchPayload(BaseModel):
-    files: list[StagedFilePayload]
-    idempotency_key: str | None = None
+    files: list[StagedFilePayload] = Field(min_length=1, max_length=50)
+    idempotency_key: str | None = Field(default=None, max_length=128)
 
 
 class SignupPayload(BaseModel):
@@ -1209,7 +1209,7 @@ async def _upload_project_run_multipart(request: Request, run: dict, wire_limit:
                     raise upload_error("file_too_large", f"{name} exceeds the {CONFIG.max_upload_file_bytes} byte file limit", name, 413)
                 destination = Path(temporary) / str(index)
                 size = 0
-                with destination.open("wb") as handle:
+                async with await anyio.open_file(destination, "wb") as handle:
                     while chunk := await upload.read(1024 * 1024):
                         size += len(chunk)
                         total_size += len(chunk)
@@ -1217,7 +1217,7 @@ async def _upload_project_run_multipart(request: Request, run: dict, wire_limit:
                             raise upload_error("file_too_large", f"{name} exceeds the {CONFIG.max_upload_file_bytes} byte file limit", name, 413)
                         if total_size > CONFIG.max_upload_batch_bytes:
                             raise upload_error("batch_too_large", f"Batch exceeds the {CONFIG.max_upload_batch_bytes} byte limit", status=413)
-                        handle.write(chunk)
+                        await handle.write(chunk)
                 paths.append((upload.filename or name, destination, upload.content_type))
             return await run_in_threadpool(_ingest_multipart_paths_with_lock, run, paths, total_size)
 
@@ -1247,10 +1247,37 @@ def authorized_upload_run(project_id: str, run_id: str, request: Request, *, req
 
 
 @app.post("/api/projects/{project_id}/runs/{run_id}/batches")
-def begin_upload_batch(project_id: str, run_id: str, payload: StagedBatchPayload, request: Request) -> dict:
+async def begin_upload_batch(project_id: str, run_id: str, request: Request) -> dict:
     run = authorized_upload_run(project_id, run_id, request)
+    payload = await _read_staged_batch_payload(request)
+    if len(payload.files) > CONFIG.max_batch_files:
+        raise upload_error("too_many_files", f"Select 1 to {CONFIG.max_batch_files} files", status=413)
     cleanup_abandoned_uploads(CONFIG, project_id)
     return create_upload_batch(CONFIG, run, [item.model_dump() for item in payload.files], idempotency_key=payload.idempotency_key)
+
+
+async def _read_staged_batch_payload(request: Request) -> StagedBatchPayload:
+    limit = 64 * 1024
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            declared_length = int(content_length)
+        except ValueError as exc:
+            raise upload_error("invalid_upload", "Content-Length must be an integer") from exc
+        if declared_length > limit:
+            raise upload_error("batch_metadata_too_large", "Staged batch metadata exceeds 64 KiB", status=413)
+    body = bytearray()
+    async for chunk in request.stream():
+        if len(body) + len(chunk) > limit:
+            raise upload_error("batch_metadata_too_large", "Staged batch metadata exceeds 64 KiB", status=413)
+        body.extend(chunk)
+    try:
+        return StagedBatchPayload.model_validate_json(body)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=[{"loc": error["loc"], "msg": error["msg"], "type": error["type"]} for error in exc.errors()],
+        ) from exc
 
 
 @app.get("/api/projects/{project_id}/runs/{run_id}/batches/{batch_id}")
@@ -1274,17 +1301,17 @@ async def stage_upload_file(project_id: str, run_id: str, batch_id: str, file_in
     temporary = destination.with_name(destination.name + ".part")
     received = 0
     try:
-        with temporary.open("wb") as handle:
+        async with await anyio.open_file(temporary, "wb") as handle:
             async for chunk in request.stream():
                 received += len(chunk)
                 if received > item["size_bytes"] or received > CONFIG.max_upload_file_bytes:
                     raise upload_error("file_too_large", f"{item['filename']} exceeds its declared size or file limit", item["filename"], 413)
-                handle.write(chunk)
+                await handle.write(chunk)
         if received != item["size_bytes"]:
             raise upload_error("size_mismatch", f"{item['filename']} uploaded {received} of {item['size_bytes']} declared bytes", item["filename"])
-        temporary.replace(destination)
+        await run_in_threadpool(temporary.replace, destination)
     except BaseException:
-        temporary.unlink(missing_ok=True)
+        await run_in_threadpool(temporary.unlink, missing_ok=True)
         with anyio.CancelScope(shield=True):
             await run_in_threadpool(finish_batch_file_transfer, CONFIG, project_id, run_id, batch_id, file_index, "pending")
         raise
@@ -1946,12 +1973,12 @@ async def upload_dem_compat(
     with tempfile.TemporaryDirectory(dir=run_dir(CONFIG, run_id)) as temporary:
         path = Path(temporary) / normalized
         received = 0
-        with path.open("wb") as handle:
+        async with await anyio.open_file(path, "wb") as handle:
             async for chunk in request.stream():
                 received += len(chunk)
                 if received > CONFIG.max_upload_file_bytes:
                     raise upload_error("file_too_large", f"{normalized} exceeds the {CONFIG.max_upload_file_bytes} byte file limit", normalized, 413)
-                handle.write(chunk)
+                await handle.write(chunk)
         return (await run_in_threadpool(ingest_file_paths, CONFIG, run, [(filename, path, request.headers.get("content-type"))]))["run"]
 
 
