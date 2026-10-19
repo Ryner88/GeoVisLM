@@ -117,6 +117,17 @@ BATCH_UPLOAD_SCRIPT = """
     message.textContent = 'An unfinished upload is available. Select the same files and submit to resume, or cancel it.';
   }
   const explain = (body) => body?.detail?.error_message || body?.error_message || 'Upload failed';
+  const showOutcome = (outcome) => {
+    remember(null);
+    message.textContent = `Batch ${outcome.batch_status}. ${outcome.files.length} file(s) checked.`;
+    for (const record of outcome.files) {
+      const row = document.createElement('li');
+      const errors = (record.validation_errors || []).map(error => error.error_message);
+      const warnings = (record.warnings || []).map(warning => warning.message);
+      row.textContent = `${record.original_filename}: ${record.status}${[...errors, ...warnings].length ? ' — ' + [...errors, ...warnings].join('; ') : ''}`;
+      results.append(row);
+    }
+  };
   cancelButton.addEventListener('click', async () => {
     if (!active) return;
     cancelButton.disabled = true;
@@ -175,6 +186,10 @@ BATCH_UPLOAD_SCRIPT = """
         if (!created.ok) throw new Error(explain(batch));
         remember({...active, batchId: batch.batch_id});
       }
+      if (batch.status === 'completed') {
+        showOutcome(batch.result);
+        return;
+      }
       if (batch.status === 'failed') throw new Error('This batch failed validation. Cancel it, then start a new upload.');
       let finished = 0;
       for (const [index, file] of files.entries()) {
@@ -203,15 +218,7 @@ BATCH_UPLOAD_SCRIPT = """
       const completed = await fetch(`${base}/batches/${batch.batch_id}/complete`, {method: 'POST'});
       const outcome = await completed.json();
       if (!completed.ok) throw new Error(explain(outcome));
-      remember(null);
-      message.textContent = `Batch ${outcome.batch_status}. ${outcome.files.length} file(s) checked.`;
-      for (const record of outcome.files) {
-        const row = document.createElement('li');
-        const errors = (record.validation_errors || []).map(error => error.error_message);
-        const warnings = (record.warnings || []).map(warning => warning.message);
-        row.textContent = `${record.original_filename}: ${record.status}${[...errors, ...warnings].length ? ' — ' + [...errors, ...warnings].join('; ') : ''}`;
-        results.append(row);
-      }
+      showOutcome(outcome);
     } catch (error) {
       message.textContent = error.message;
     } finally {
