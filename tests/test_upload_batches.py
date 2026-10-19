@@ -19,6 +19,8 @@ from geovis_lm.dashboard.operations import (
     create_project,
     create_run_record,
     create_upload_batch,
+    project_upload_bytes,
+    begin_batch_file_transfer,
     ensure_storage,
     get_upload_batch,
     ingest_file_paths,
@@ -136,3 +138,75 @@ def test_unexpected_validation_failure_removes_uncommitted_bytes(tmp_path, monke
         ingest_file_paths(config, run, [(source.name, source, None)])
     assert not (config.runs_root / run["run_id"] / "inputs" / "raw" / source.name).exists()
     assert not (config.runs_root / run["run_id"] / "inputs" / "validated" / source.name).exists()
+
+
+def test_manifest_filename_cannot_escape_staging_or_replace_receipt(tmp_path):
+    config, _, run = setup_run(tmp_path)
+    with pytest.raises(HTTPException) as reserved:
+        create_upload_batch(config, run, [{"filename": "batch.json", "size_bytes": 2}])
+    assert reserved.value.detail["error_code"] == "unsafe_filename"
+    batch = create_upload_batch(config, run, [{"filename": "a.csv", "size_bytes": 8}])
+    victim = tmp_path / "victim"
+    victim.write_text("safe")
+    batch["files"][0]["filename"] = "../../../../../victim"
+    write_json(batch_dir(config, run["run_id"], batch["batch_id"]) / "batch.json", batch)
+    with pytest.raises(HTTPException):
+        complete_upload_batch(config, run, batch["batch_id"])
+    assert victim.read_text() == "safe"
+
+
+def test_batch_creation_idempotency_and_duplicate_name_reservation(tmp_path):
+    config, _, run = setup_run(tmp_path)
+    files = [{"filename": "a.csv", "size_bytes": 8}]
+    first = create_upload_batch(config, run, files, idempotency_key="request-1")
+    assert create_upload_batch(config, run, files, idempotency_key="request-1")["batch_id"] == first["batch_id"]
+    with pytest.raises(HTTPException) as duplicate:
+        create_upload_batch(config, run, files, idempotency_key="request-2")
+    assert duplicate.value.detail["error_code"] == "duplicate_filename"
+
+
+def test_finalization_recovers_committed_inputs_without_double_quota(tmp_path):
+    config, project, run = setup_run(tmp_path)
+    batch = create_upload_batch(config, run, [{"filename": "a.csv", "size_bytes": 8}])
+    directory = batch_dir(config, run["run_id"], batch["batch_id"])
+    (directory / "a.csv").write_bytes(b"a,b\n1,2\n")
+    batch["files"][0]["status"] = "uploaded"
+    write_json(directory / "batch.json", batch)
+    original = complete_upload_batch(config, run, batch["batch_id"])
+    assert project_upload_bytes(config, project["id"]) == 8
+    batch["status"] = "validating"
+    write_json(directory / "batch.json", batch)
+    assert project_upload_bytes(config, project["id"]) == 8
+    recovered = complete_upload_batch(config, run, batch["batch_id"])
+    assert recovered["files"][0]["id"] == original["files"][0]["id"]
+    assert project_upload_bytes(config, project["id"]) == 8
+
+
+def test_retry_records_count_each_retained_path_once(tmp_path):
+    config, project, run = setup_run(tmp_path)
+    source = tmp_path / "a.csv"
+    source.write_bytes(b"a,b\n1,2\n")
+    ingest_file_paths(config, run, [(source.name, source, None)])
+    from geovis_lm.dashboard.operations import get_run
+    retained = get_run(config, run["run_id"])["inputs"]
+    retry = create_run_record(config, project, "owner")
+    write_json(config.runs_root / retry["run_id"] / "metadata.json", {**retry, "inputs": retained})
+    assert project_upload_bytes(config, project["id"]) == 8
+
+
+def test_queued_run_rejects_new_staged_transfer(tmp_path):
+    config, _, run = setup_run(tmp_path)
+    batch = create_upload_batch(config, run, [{"filename": "a.csv", "size_bytes": 8}])
+    from geovis_lm.dashboard.operations import update_run
+    update_run(config, run["run_id"], status="queued")
+    with pytest.raises(HTTPException) as error:
+        begin_batch_file_transfer(config, run["project_id"], run["run_id"], batch["batch_id"], 0)
+    assert error.value.detail["error_code"] == "run_not_editable"
+
+
+def test_worker_continues_when_upload_cleanup_fails(tmp_path, monkeypatch):
+    import geovis_lm.dashboard.worker as worker
+
+    config, _, _ = setup_run(tmp_path)
+    monkeypatch.setattr(worker, "cleanup_abandoned_uploads", lambda *_: (_ for _ in ()).throw(OSError("cleanup failed")))
+    worker.run_worker_loop(config, lambda *_args, **_kwargs: {}, poll_interval_seconds=0, max_iterations=1)

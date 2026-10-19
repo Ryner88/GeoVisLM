@@ -193,8 +193,12 @@ validates the batch only after every declared file has arrived, so Shapefile
 parts can be opened together. Each Shapefile part shares a `dataset_id` based
 on its filename stem. A missing or corrupt required part invalidates the whole
 bundle. Valid unrelated datasets can still finish in the same batch.
+Batch creation accepts a client idempotency key, so a retry after a lost
+creation response returns the original batch instead of reserving quota again.
 If a transfer fails, the page keeps the batch ID so the same file selection can
-resume after a retry, including after a page reload. It also offers Cancel,
+resume after a retry, including after a page reload when browser storage is
+available. Resuming reuploads selected files, including files previously staged,
+so changed local content cannot silently reuse old staged bytes. It also offers Cancel,
 which calls `DELETE .../batches/{batch_id}` and removes uncommitted staged files.
 Completed batches cannot be canceled because their valid inputs belong to the
 run. A failed finalization can be canceled and started again.
@@ -202,7 +206,8 @@ run. A failed finalization can be canceled and started again.
 The original JSON/base64 endpoint at `POST .../runs/{run_id}/files` remains
 available. It accepts multiple files in one request and returns the same
 per-file result shape, but staged uploads avoid buffering a whole large batch
-in the browser.
+in the browser. JSON request bodies are capped at 16 MB before parsing; larger
+files must use staged uploads.
 
 Clients that send `multipart/form-data` can use
 `POST .../runs/{run_id}/files/multipart` with repeated `files` parts. This
@@ -289,6 +294,10 @@ Temporary upload files:
 - Finalization, queuing, and the transition to running use the same project
   lock. Finalization verifies that the run is still editable while holding that
   lock, so an upload cannot reset a queued or running analysis to `uploaded`.
+- Run and batch metadata are written with atomic replacement. If a process
+  stops after run inputs are committed but before the batch receipt is saved,
+  retrying finalization reconstructs the receipt from input records and does
+  not count the staged reservation twice.
 - Completed batch receipts are removed by the same 24-hour staging sweep; the
   run's input records remain available.
 

@@ -1424,8 +1424,47 @@ def test_running_analysis_cannot_be_overwritten_by_staged_finalization(app_modul
         stale = request(app_module.app, "post", f"{base}/{batch_id}/complete", headers=auth())
         assert stale.status_code == 400
         assert operations.get_run(app_module.CONFIG, run["run_id"])["status"] == "running"
+        assert request(app_module.app, "post", f"/api/runs/{run['run_id']}/cancel", headers=auth()).status_code == 200
         release.set()
-        assert analysis.result(timeout=5)["status"] == "failed"
+        assert analysis.result(timeout=5)["status"] == "canceled"
+    assert operations.get_run(app_module.CONFIG, run["run_id"])["status"] == "canceled"
+
+
+def test_direct_analysis_cannot_bypass_queued_job(app_module):
+    from geovis_lm.dashboard.worker import run_worker_once
+
+    project, run = create_project_and_run(app_module.app)
+    assert request(app_module.app, "post", f"/api/runs/{run['run_id']}/queue", headers=auth()).status_code == 200
+    direct = request(app_module.app, "post", f"/api/runs/{run['run_id']}/analyze", headers=auth())
+    assert direct.status_code == 400
+    assert request(app_module.app, "get", f"/api/runs/{run['run_id']}", headers=auth()).json()["status"] == "queued"
+    result = run_worker_once(app_module.CONFIG, app_module.run_analysis_workflow)
+    assert result["status"] == "failed"  # Missing DEM, but the queued job owns the transition.
+    assert result["run"]["error_code"] == "missing_dem"
+
+
+def test_legacy_json_body_is_bounded_before_parsing(app_module):
+    from dataclasses import replace
+
+    project, run = create_project_and_run(app_module.app)
+    app_module.CONFIG = replace(app_module.CONFIG, max_upload_batch_bytes=8)
+    response = request(app_module.app, "post", f"/api/projects/{project['id']}/runs/{run['run_id']}/files", headers=auth(), content=b"x" * 100)
+    assert response.status_code == 413
+    assert response.json()["detail"]["error_code"] == "legacy_upload_too_large"
+
+
+def test_concurrent_multipart_uploads_respect_project_quota(app_module):
+    from concurrent.futures import ThreadPoolExecutor
+    from dataclasses import replace
+
+    project, run = create_project_and_run(app_module.app)
+    app_module.CONFIG = replace(app_module.CONFIG, max_project_bytes=12)
+    base = f"/api/projects/{project['id']}/runs/{run['run_id']}/files/multipart"
+    def upload(name):
+        return request(app_module.app, "post", base, headers=auth(), files=[("files", (name, b"a,b\n1,2\n", "text/csv"))])
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(upload, ["a.csv", "b.csv"]))
+    assert sorted(result.status_code for result in results) == [200, 413]
 
 
 def test_authorization_rejects_cross_user_access(app_module):
