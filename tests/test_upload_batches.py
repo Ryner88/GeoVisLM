@@ -177,6 +177,20 @@ def test_batch_creation_idempotency_and_duplicate_name_reservation(tmp_path):
     assert duplicate.value.detail["error_code"] == "duplicate_filename"
 
 
+def test_invalid_retry_input_does_not_reserve_its_filename(tmp_path):
+    from geovis_lm.dashboard.operations import update_run
+
+    config, _, run = setup_run(tmp_path)
+    run = update_run(
+        config,
+        run["run_id"],
+        status="retrying",
+        inputs=[{"stored_filename": "terrain.tif", "status": "invalid", "path": None}],
+    )
+    batch = create_upload_batch(config, run, [{"filename": "terrain.tif", "size_bytes": 8}])
+    assert batch["files"][0]["filename"] == "terrain.tif"
+
+
 def test_finalization_recovers_committed_inputs_without_double_quota(tmp_path):
     config, project, run = setup_run(tmp_path)
     batch = create_upload_batch(config, run, [{"filename": "a.csv", "size_bytes": 8}])

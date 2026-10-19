@@ -68,7 +68,11 @@ def run_worker_once(config: DashboardConfig, analyze_run: AnalyzeRun) -> dict:
             return {"status": "canceled", "job": job, "run": get_run(config, job["run_id"])}
         run = get_run(config, job["run_id"])
         with project_upload_lock(config, run["project_id"]):
-            if get_run(config, job["run_id"])["status"] == "running":
+            current_run = get_run(config, job["run_id"])
+            # The claimed job owns this queued run until analysis changes it to
+            # running. Cover failures before that transition too, while the
+            # project lock preserves a concurrent cancellation.
+            if job.get("status") == "running" and current_run["status"] in {"queued", "running"}:
                 update_run(
                     config,
                     job["run_id"],

@@ -125,7 +125,7 @@ def test_authentication_is_required_for_operational_routes(app_module):
 
 def test_runs_record_workflow_template_metadata(app_module):
     operations = sys.modules["geovis_lm.dashboard.operations"]
-    project, run = create_project_and_run(app_module.app)
+    _project, run = create_project_and_run(app_module.app)
     operations.copy_sample_dem_to_run(app_module.CONFIG, run["run_id"], Path("data/sample/sample_dem.tif"))
 
     result = request(app_module.app, "post", f"/api/runs/{run['run_id']}/analyze", headers=auth())
@@ -1473,6 +1473,49 @@ def test_direct_analysis_cannot_bypass_queued_job(app_module):
     result = run_worker_once(app_module.CONFIG, app_module.run_analysis_workflow)
     assert result["status"] == "failed"  # Missing DEM, but the queued job owns the transition.
     assert result["run"]["error_code"] == "missing_dem"
+
+
+def test_worker_startup_exception_fails_queued_run(app_module):
+    from geovis_lm.dashboard.worker import run_worker_once
+
+    _project, run = create_project_and_run(app_module.app)
+    assert request(app_module.app, "post", f"/api/runs/{run['run_id']}/queue", headers=auth()).status_code == 200
+
+    def fail_before_start(*_args, **_kwargs):
+        raise OSError("initial transition failed")
+
+    result = run_worker_once(app_module.CONFIG, fail_before_start)
+    assert result["status"] == "failed"
+    failed = sys.modules["geovis_lm.dashboard.operations"].get_run(app_module.CONFIG, run["run_id"])
+    assert failed["status"] == "failed"
+    assert failed["error_code"] == "worker_failed"
+    assert failed["retryable"] is True
+
+
+def test_staged_batch_locking_runs_off_event_loop(app_module, monkeypatch):
+    import threading
+
+    project, run = create_project_and_run(app_module.app)
+    caller_thread = threading.get_ident()
+    operation_threads = []
+    monkeypatch.setattr(app_module, "cleanup_abandoned_uploads", lambda *_: operation_threads.append(threading.get_ident()))
+
+    def create_batch(*_args, **_kwargs):
+        operation_threads.append(threading.get_ident())
+        return {"batch_id": "batch-test"}
+
+    monkeypatch.setattr(app_module, "create_upload_batch", create_batch)
+    response = request(
+        app_module.app,
+        "post",
+        f"/api/projects/{project['id']}/runs/{run['run_id']}/batches",
+        headers=auth(),
+        json={"files": [{"filename": "a.csv", "size_bytes": 1}]},
+    )
+    assert response.status_code == 200
+    assert response.json()["batch_id"] == "batch-test"
+    assert len(operation_threads) == 2
+    assert all(thread_id != caller_thread for thread_id in operation_threads)
 
 
 def test_legacy_json_body_is_bounded_before_parsing(app_module):

@@ -1479,6 +1479,14 @@ def ingest_file_paths(config: DashboardConfig, run: dict[str, Any], paths: list[
         return _ingest_file_paths_locked(config, run, paths)
 
 
+def reserved_input_names(run: dict[str, Any]) -> set[str]:
+    return {
+        item.get("stored_filename", "").lower()
+        for item in run.get("inputs", [])
+        if item.get("status") != "invalid" and item.get("path") and Path(item["path"]).is_file()
+    }
+
+
 def _ingest_file_paths_locked(config: DashboardConfig, run: dict[str, Any], paths: list[tuple[str, Path, str | None]], *, staged_bytes: int = 0, source_batch_id: str | None = None) -> dict[str, Any]:
     if not paths:
         raise upload_error("empty_batch", "Select at least one file")
@@ -1487,7 +1495,7 @@ def _ingest_file_paths_locked(config: DashboardConfig, run: dict[str, Any], path
     names = [normalize_filename(name) for name, _, _ in paths]
     if len(set(name.lower() for name in names)) != len(names):
         raise upload_error("duplicate_filename", "File names in a batch must be unique")
-    existing_names = {item.get("stored_filename", "").lower() for item in run.get("inputs", [])}
+    existing_names = reserved_input_names(run)
     if any(name.lower() in existing_names for name in names):
         raise upload_error("duplicate_filename", "A file with this name is already in the run; create a new run to replace it")
     sizes = [path.stat().st_size for _, path, _ in paths]
@@ -1501,7 +1509,7 @@ def _ingest_file_paths_locked(config: DashboardConfig, run: dict[str, Any], path
     run = get_run(config, run["run_id"])
     if run["status"] not in {"created", "uploaded", "retrying"}:
         raise upload_error("run_not_editable", "Uploads are closed for this analysis")
-    current_names = {item.get("stored_filename", "").lower() for item in run.get("inputs", [])}
+    current_names = reserved_input_names(run)
     if any(name.lower() in current_names for name in names):
         raise upload_error("duplicate_filename", "A file with this name is already in the run; create a new run to replace it")
     if project_upload_bytes(config, run["project_id"]) - staged_bytes + sum(sizes) > config.max_project_bytes:
@@ -1690,7 +1698,7 @@ def create_upload_batch(config: DashboardConfig, run: dict[str, Any], files: lis
     names = [normalize_filename(item.get("filename", "")) for item in files]
     if len({name.lower() for name in names}) != len(names):
         raise upload_error("duplicate_filename", "File names in a batch must be unique")
-    existing = {item.get("stored_filename", "").lower() for item in run.get("inputs", [])}
+    existing = reserved_input_names(run)
     entries = []
     total = 0
     for item, name in zip(files, names):
@@ -1711,7 +1719,7 @@ def create_upload_batch(config: DashboardConfig, run: dict[str, Any], files: lis
         current_run = get_run(config, run["run_id"])
         if current_run["status"] not in {"created", "uploaded", "retrying"}:
             raise upload_error("run_not_editable", "Uploads are closed for this analysis")
-        current_names = {item.get("stored_filename", "").lower() for item in current_run.get("inputs", [])}
+        current_names = reserved_input_names(current_run)
         if any(name.lower() in current_names for name in names):
             raise upload_error("duplicate_filename", "A file with this name is already in the run")
         staging = run_dir(config, run["run_id"]) / "inputs" / "staging"

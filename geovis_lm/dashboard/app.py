@@ -1252,8 +1252,18 @@ async def begin_upload_batch(project_id: str, run_id: str, request: Request) -> 
     payload = await _read_staged_batch_payload(request)
     if len(payload.files) > CONFIG.max_batch_files:
         raise upload_error("too_many_files", f"Select 1 to {CONFIG.max_batch_files} files", status=413)
+    return await run_in_threadpool(
+        _cleanup_and_create_upload_batch,
+        project_id,
+        run,
+        [item.model_dump() for item in payload.files],
+        payload.idempotency_key,
+    )
+
+
+def _cleanup_and_create_upload_batch(project_id: str, run: dict, files: list[dict], idempotency_key: str | None) -> dict:
     cleanup_abandoned_uploads(CONFIG, project_id)
-    return create_upload_batch(CONFIG, run, [item.model_dump() for item in payload.files], idempotency_key=payload.idempotency_key)
+    return create_upload_batch(CONFIG, run, files, idempotency_key=idempotency_key)
 
 
 async def _read_staged_batch_payload(request: Request) -> StagedBatchPayload:
