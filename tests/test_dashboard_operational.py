@@ -1500,6 +1500,30 @@ def test_failed_run_can_create_retry_run(app_module):
     assert retry["job"]["status"] == "queued"
 
 
+def test_retry_run_drops_invalid_input_name_reservations(app_module):
+    project, run = create_project_and_run(app_module.app)
+    base = f"/api/projects/{project['id']}/runs/{run['run_id']}"
+    invalid_upload = request(
+        app_module.app,
+        "post",
+        f"{base}/files/multipart",
+        headers=auth(),
+        files=[("files", ("terrain.tif", b"not a raster", "image/tiff"))],
+    )
+    assert invalid_upload.status_code == 200
+    assert invalid_upload.json()["files"][0]["status"] == "invalid"
+
+    failed = request(app_module.app, "post", f"/api/runs/{run['run_id']}/analyze", headers=auth())
+    assert failed.status_code == 200
+    assert failed.json()["retryable"] is True
+
+    retry_response = request(app_module.app, "post", f"/api/runs/{run['run_id']}/retry", headers=auth())
+    assert retry_response.status_code == 200
+    retry = retry_response.json()
+    assert retry["inputs"] == []
+    assert retry["status"] == "queued"
+
+
 def test_dem_analysis_adapter_writes_outputs_and_summary(tmp_path):
     from geovis_lm.dashboard.analysis_adapter import execute_dem_analysis
 

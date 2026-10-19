@@ -1420,7 +1420,12 @@ def retry_run(run_id: str, request: Request) -> dict:
         retry_of_run_id=run_id,
         attempt_number=int(source_run.get("attempt_number", 1)) + 1,
     )
-    retry["inputs"] = source_run.get("inputs", [])
+    # Carry forward only inputs that remain usable. Invalid records have no
+    # stored path and must not reserve a filename on the fresh retry run.
+    retry["inputs"] = [
+        item for item in source_run.get("inputs", [])
+        if item.get("status") == "valid" and item.get("path") and Path(item["path"]).is_file()
+    ]
     retry = update_run(
         CONFIG,
         retry["run_id"],
