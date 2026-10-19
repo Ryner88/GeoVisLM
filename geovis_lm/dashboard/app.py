@@ -1171,19 +1171,12 @@ async def upload_project_run_files(project_id: str, run_id: str, request: Reques
 @app.post("/api/projects/{project_id}/runs/{run_id}/files/multipart")
 async def upload_project_run_multipart(project_id: str, run_id: str, request: Request) -> dict:
     run = authorized_upload_run(project_id, run_id, request)
-    lock = project_upload_lock(CONFIG, project_id)
-    await run_in_threadpool(lock.__enter__)
-    try:
-        current_run = get_run(CONFIG, run_id)
-        if current_run["status"] not in {"created", "uploaded", "retrying"}:
-            raise upload_error("run_not_editable", "Uploads are closed for this analysis")
-        remaining = max(0, CONFIG.max_project_bytes - project_upload_bytes(CONFIG, project_id))
-        return await _upload_project_run_multipart_locked(request, current_run, min(CONFIG.max_upload_batch_bytes, remaining) + 1024 * 1024)
-    finally:
-        await run_in_threadpool(lock.__exit__, None, None, None)
+    # Bound parsing by the batch limit. The project quota is checked under the
+    # upload lock after the request body has been fully spooled.
+    return await _upload_project_run_multipart(request, run, CONFIG.max_upload_batch_bytes + 1024 * 1024)
 
 
-async def _upload_project_run_multipart_locked(request: Request, run: dict, wire_limit: int) -> dict:
+async def _upload_project_run_multipart(request: Request, run: dict, wire_limit: int) -> dict:
     content_length = request.headers.get("content-length")
     if content_length:
         try:
@@ -1226,7 +1219,19 @@ async def _upload_project_run_multipart_locked(request: Request, run: dict, wire
                             raise upload_error("batch_too_large", f"Batch exceeds the {CONFIG.max_upload_batch_bytes} byte limit", status=413)
                         handle.write(chunk)
                 paths.append((upload.filename or name, destination, upload.content_type))
-            return await run_in_threadpool(_ingest_file_paths_locked, CONFIG, run, paths)
+            return await run_in_threadpool(_ingest_multipart_paths_with_lock, run, paths, total_size)
+
+
+def _ingest_multipart_paths_with_lock(run: dict, paths: list, total_size: int) -> dict:
+    project_id = run["project_id"]
+    with project_upload_lock(CONFIG, project_id):
+        current_run = get_run(CONFIG, run["run_id"])
+        if current_run["status"] not in {"created", "uploaded", "retrying"}:
+            raise upload_error("run_not_editable", "Uploads are closed for this analysis")
+        remaining = max(0, CONFIG.max_project_bytes - project_upload_bytes(CONFIG, project_id))
+        if total_size > remaining:
+            raise upload_error("project_quota_exceeded", "Upload exceeds the remaining project storage quota", status=413)
+        return _ingest_file_paths_locked(CONFIG, current_run, paths)
 
 
 def authorized_upload_run(project_id: str, run_id: str, request: Request, *, require_editable: bool = True) -> dict:
