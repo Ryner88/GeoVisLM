@@ -58,6 +58,9 @@ Optional sidecar files:
 - `.sbn`, `.sbx`: spatial index
 - `.xml`: metadata
 
+An `.xml` metadata sidecar may use either `rivers.xml` or the common
+`rivers.shp.xml` name; both belong to the `rivers` dataset.
+
 Rules:
 
 - All bundle files must share the same base filename.

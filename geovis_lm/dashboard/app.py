@@ -878,8 +878,14 @@ def run_analysis_workflow(run_id: str, *, from_worker: bool = False) -> dict:
   initial = get_run(CONFIG, run_id)
   with project_upload_lock(CONFIG, initial["project_id"]):
     metadata = get_run(CONFIG, run_id)
-    if metadata["status"] not in ({"queued"} if from_worker else {"created", "uploaded", "retrying"}):
-      raise upload_error("run_not_ready", "Analysis cannot start from this state")
+    if from_worker:
+      if metadata["status"] != "queued":
+        raise upload_error("run_not_ready", "Queued job cannot start from this state")
+    else:
+      if metadata["status"] == "queued":
+        raise upload_error("run_not_ready", "Use the queued job to run this analysis")
+      if metadata["status"] not in {"created", "uploaded", "retrying"}:
+        raise upload_error("run_not_ready", "Analysis cannot start from this state")
     metadata = update_run(CONFIG, run_id, status="running", status_message="Analysis started")
   workflow_type = normalize_workflow_type(metadata.get("workflow_type", "terrain"))
   template = resolve_workflow_template(workflow_type)

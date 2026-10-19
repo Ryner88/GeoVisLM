@@ -47,6 +47,18 @@ def test_complete_shapefile_bundle_is_one_valid_dataset(tmp_path):
     assert all(item["status"] == "valid" and Path(item["path"]).exists() for item in result["files"])
 
 
+def test_shapefile_xml_metadata_uses_dataset_stem(tmp_path):
+    config, _, run = setup_run(tmp_path)
+    source = tmp_path / "roads.shp"
+    gpd.GeoDataFrame({"name": ["Main"]}, geometry=[Point(0, 0)], crs="EPSG:4326").to_file(source)
+    metadata = tmp_path / "roads.shp.xml"
+    metadata.write_text("<metadata/>")
+    paths = sorted(tmp_path.glob("roads.*"))
+    result = ingest_file_paths(config, run, [(path.name, path, None) for path in paths])
+    assert result["batch_status"] == "valid"
+    assert {item["dataset_id"] for item in result["files"]} == {"roads"}
+
+
 def test_partial_bundle_keeps_errors_and_removes_bytes(tmp_path):
     config, _, run = setup_run(tmp_path)
     path = tmp_path / "roads.shp"

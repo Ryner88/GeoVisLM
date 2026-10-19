@@ -1399,6 +1399,11 @@ def validate_file_content(path: Path, extension: str) -> dict[str, Any]:
 SHAPEFILE_EXTENSIONS = {".shp", ".shx", ".dbf", ".prj", ".cpg", ".qix", ".sbn", ".sbx", ".xml"}
 
 
+def shapefile_stem(filename: str) -> str:
+    lower = filename.lower()
+    return lower[:-8] if lower.endswith(".shp.xml") else Path(lower).stem
+
+
 def upload_error(code: str, message: str, filename: str | None = None, status: int = 400) -> HTTPException:
     detail = {"error_code": code, "error_message": message}
     if filename:
@@ -1453,7 +1458,7 @@ def validate_shapefile_bundle(file_records: list[dict[str, Any]]) -> list[dict[s
     by_stem: dict[str, dict[str, dict[str, Any]]] = {}
     for record in file_records:
         if record["extension"] in SHAPEFILE_EXTENSIONS:
-            by_stem.setdefault(Path(record["stored_filename"]).stem.lower(), {})[record["extension"]] = record
+            by_stem.setdefault(shapefile_stem(record["stored_filename"]), {})[record["extension"]] = record
     for stem, parts in by_stem.items():
         missing = sorted(SHAPEFILE_REQUIRED - parts.keys())
         if missing:
@@ -1514,7 +1519,7 @@ def _ingest_file_paths_locked(config: DashboardConfig, run: dict[str, Any], path
             record = {
                 "id": uuid4().hex, "project_id": run["project_id"], "run_id": run["run_id"],
                 "role": "input", "file_type": file_type_from_extension(extension),
-                "dataset_id": Path(name).stem.lower() if extension in SHAPEFILE_EXTENSIONS else uuid4().hex,
+                "dataset_id": shapefile_stem(name) if extension in SHAPEFILE_EXTENSIONS else uuid4().hex,
                 "original_filename": original, "stored_filename": name, "extension": extension,
                 "source_batch_id": source_batch_id,
                 "content_type": content_type, "path": str(raw_path), "size_bytes": size,
@@ -1546,9 +1551,9 @@ def _ingest_file_paths_locked(config: DashboardConfig, run: dict[str, Any], path
                 })
             record["updated_at"] = utc_now()
         # A bundle is one dataset: one corrupt component invalidates all its siblings.
-        invalid_stems = {Path(item["stored_filename"]).stem.lower() for item in records if item["extension"] in SHAPEFILE_EXTENSIONS and item["status"] == "invalid"}
+        invalid_stems = {shapefile_stem(item["stored_filename"]) for item in records if item["extension"] in SHAPEFILE_EXTENSIONS and item["status"] == "invalid"}
         for record in records:
-            if record["extension"] in SHAPEFILE_EXTENSIONS and Path(record["stored_filename"]).stem.lower() in invalid_stems and record["status"] == "valid":
+            if record["extension"] in SHAPEFILE_EXTENSIONS and shapefile_stem(record["stored_filename"]) in invalid_stems and record["status"] == "valid":
                 record["status"] = "invalid"
                 record["validation_errors"].append({"error_code": "invalid_shapefile_bundle", "error_message": f"{record['stored_filename']}: another bundle component failed validation"})
         for record in records:
