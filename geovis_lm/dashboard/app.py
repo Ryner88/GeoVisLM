@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import secrets
 import tempfile
+import anyio
 from html import escape
 from urllib.parse import quote
 from urllib.parse import parse_qs
@@ -10,7 +11,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 
@@ -1160,7 +1161,10 @@ async def upload_project_run_files(project_id: str, run_id: str, request: Reques
         if len(body) + len(chunk) > limit:
             raise upload_error("legacy_upload_too_large", "Use staged uploads for JSON requests over 16 MB", status=413)
         body.extend(chunk)
-    payload = BatchUploadPayload.model_validate_json(body)
+    try:
+        payload = BatchUploadPayload.model_validate_json(body)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=[{"loc": error["loc"], "msg": error["msg"], "type": error["type"]} for error in exc.errors()]) from exc
     return await run_in_threadpool(ingest_base64_files, CONFIG, run, [item.model_dump() for item in payload.files])
 
 
@@ -1276,7 +1280,8 @@ async def stage_upload_file(project_id: str, run_id: str, batch_id: str, file_in
         temporary.replace(destination)
     except BaseException:
         temporary.unlink(missing_ok=True)
-        finish_batch_file_transfer(CONFIG, project_id, run_id, batch_id, file_index, "pending")
+        with anyio.CancelScope(shield=True):
+            await run_in_threadpool(finish_batch_file_transfer, CONFIG, project_id, run_id, batch_id, file_index, "pending")
         raise
     await run_in_threadpool(finish_batch_file_transfer, CONFIG, project_id, run_id, batch_id, file_index, "uploaded")
     return {"batch_id": batch_id, "filename": item["filename"], "status": "uploaded", "bytes_uploaded": received}

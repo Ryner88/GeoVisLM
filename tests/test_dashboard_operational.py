@@ -1452,6 +1452,12 @@ def test_legacy_json_body_is_bounded_before_parsing(app_module):
     assert response.status_code == 413
     assert response.json()["detail"]["error_code"] == "legacy_upload_too_large"
 
+    app_module.CONFIG = replace(app_module.CONFIG, max_upload_batch_bytes=1024)
+    malformed = request(app_module.app, "post", f"/api/projects/{project['id']}/runs/{run['run_id']}/files", headers=auth(), content=b"not json")
+    assert malformed.status_code == 422
+    invalid_schema = request(app_module.app, "post", f"/api/projects/{project['id']}/runs/{run['run_id']}/files", headers=auth(), json={"files": "bad"})
+    assert invalid_schema.status_code == 422
+
 
 def test_concurrent_multipart_uploads_respect_project_quota(app_module):
     from concurrent.futures import ThreadPoolExecutor
