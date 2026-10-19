@@ -65,19 +65,36 @@ the private systemd runtime directory.
 Install `/etc/geovis-lm/offhost-alert.env` from the separate alert example with
 the same ownership and mode. It contains the webhook configuration but no B2
 credentials, so the systemd failure handler cannot read storage credentials.
+Install the alert handler and unit independently of the backup service/timer:
+
+```bash
+sudo install -o root -g root -m 0755 scripts/offhost_alert.py \
+  /usr/local/libexec/geovis-offhost-alert
+sudo install -o root -g root -m 0644 \
+  deploy/systemd/geovis-offhost-backup-alert.service /etc/systemd/system/
+sudo systemctl daemon-reload
+```
 
 ## Manual validation before scheduling
 
-Run the unit/regression suite first. Then test delivery to the real operator
-channel; a successful HTTP response alone is insufficient—have an operator
-confirm receipt.
+Run the unit/regression suite first. Exercise the actual `OnFailure=` path with
+a disposable transient unit; this does not install, enable, or start the backup
+service or timer:
 
 ```bash
-sudo systemd-run --wait --pipe \
-  --property=EnvironmentFile=/etc/geovis-lm/offhost-backup.env \
-  --working-directory=/opt/geovis_lm \
-  /opt/geovis_lm/scripts/offhost_backup.py alert-test
+sudo systemd-run --unit=geovis-offhost-alert-probe \
+  --property=Type=oneshot \
+  --property=OnFailure=geovis-offhost-backup-alert.service \
+  /usr/bin/false
+sudo systemctl show geovis-offhost-backup-alert.service \
+  --property=Result --property=ExecMainStatus
+sudo systemctl reset-failed geovis-offhost-alert-probe.service
 ```
+
+`Result=success` and `ExecMainStatus=0` prove that the endpoint accepted the
+notification. That is transport evidence, not human receipt: verify the test
+event in the receiving system or have an operator acknowledge it before
+marking alert delivery accepted.
 
 Run one complete backup and replication manually:
 
@@ -207,7 +224,6 @@ B2-only restore, acknowledged alert test, and lifecycle deletion test all pass:
 
 ```bash
 sudo install -o root -g root -m 0644 deploy/systemd/geovis-offhost-backup.service /etc/systemd/system/
-sudo install -o root -g root -m 0644 deploy/systemd/geovis-offhost-backup-alert.service /etc/systemd/system/
 sudo install -o root -g root -m 0644 deploy/systemd/geovis-offhost-backup.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now geovis-offhost-backup.timer
