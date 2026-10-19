@@ -1236,9 +1236,9 @@ async def _upload_project_run_multipart(request: Request, run: dict, reservation
         return message
 
     limited_request = Request(request.scope, receive=bounded_receive)
-    async with limited_request.form(max_files=CONFIG.max_batch_files + 1) as form:
+    async with limited_request.form(max_files=CONFIG.max_batch_files + 1, max_fields=0) as form:
         uploads = form.getlist("files")
-        if not uploads or len(uploads) > CONFIG.max_batch_files or any(not isinstance(item, UploadFile) for item in uploads):
+        if set(form.keys()) != {"files"} or not uploads or len(uploads) > CONFIG.max_batch_files or any(not isinstance(item, UploadFile) for item in uploads):
             raise upload_error("invalid_upload", f"Send 1 to {CONFIG.max_batch_files} file parts named files")
         paths = []
         total_size = 0

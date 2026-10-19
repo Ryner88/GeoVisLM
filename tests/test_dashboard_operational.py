@@ -1598,6 +1598,21 @@ def test_multipart_reserves_project_quota_before_reading_body(app_module):
     assert received is False
 
 
+def test_multipart_rejects_non_file_form_fields(app_module):
+    project, run = create_project_and_run(app_module.app)
+    response = request(
+        app_module.app,
+        "post",
+        f"/api/projects/{project['id']}/runs/{run['run_id']}/files/multipart",
+        headers=auth(),
+        files=[
+            ("files", ("data.csv", b"a,b\n1,2\n", "text/csv")),
+            ("note", (None, "unexpected field")),
+        ],
+    )
+    assert response.status_code == 400
+
+
 def test_authorization_rejects_cross_user_access(app_module):
     project, _run = create_project_and_run(app_module.app)
 
