@@ -192,6 +192,14 @@ BATCH_UPLOAD_SCRIPT = """
         return;
       }
       if (batch.status === 'failed') throw new Error('This batch failed validation. Cancel it, then start a new upload.');
+      if (batch.status === 'validating') {
+        message.textContent = 'Resuming file validation…';
+        const completed = await fetch(`${base}/batches/${batch.batch_id}/complete`, {method: 'POST'});
+        const outcome = await completed.json();
+        if (!completed.ok) throw new Error(explain(outcome));
+        showOutcome(outcome);
+        return;
+      }
       let finished = 0;
       for (const [index, file] of files.entries()) {
         message.textContent = `Uploading ${file.name} (${index + 1}/${files.length})`;
