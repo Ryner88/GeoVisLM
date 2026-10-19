@@ -1613,6 +1613,9 @@ def batch_dir(config: DashboardConfig, run_id: str, batch_id: str) -> Path:
     return run_dir(config, run_id) / "inputs" / "staging" / safe_id(batch_id, "batch_id")
 
 
+TRANSFER_LEASE_SECONDS = 10 * 60
+
+
 def get_upload_batch(config: DashboardConfig, run_id: str, batch_id: str) -> dict[str, Any]:
     directory = batch_dir(config, run_id, batch_id)
     batch = read_json(directory / "batch.json", "Upload batch not found")
@@ -1636,6 +1639,24 @@ def begin_batch_file_transfer(config: DashboardConfig, project_id: str, run_id: 
             raise upload_error("batch_not_ready", "Batch or file index is not ready")
         item = batch["files"][file_index]
         was_uploaded = item["status"] == "uploaded"
+        if item["status"] == "receiving":
+            last_update = item.get("transfer_updated_at")
+            try:
+                updated_at = datetime.fromisoformat(last_update) if last_update else None
+                if updated_at is not None and updated_at.tzinfo is None:
+                    updated_at = updated_at.replace(tzinfo=timezone.utc)
+            except ValueError:
+                updated_at = None
+            stale = updated_at is None or (datetime.now(timezone.utc) - updated_at).total_seconds() >= TRANSFER_LEASE_SECONDS
+            if stale:
+                previous_id = item.get("transfer_id")
+                partial = batch_dir(config, run_id, batch_id) / (f"{item['filename']}.{previous_id}.part" if previous_id else f"{item['filename']}.part")
+                partial.unlink(missing_ok=True)
+                item["status"] = "pending"
+                item.pop("transfer_id", None)
+                item.pop("transfer_updated_at", None)
+            else:
+                raise upload_error("file_uploading", f"{item['filename']} is already being uploaded", item["filename"])
         if item["status"] == "uploaded" and replace_uploaded:
             (batch_dir(config, run_id, batch_id) / item["filename"]).unlink(missing_ok=True)
             item["status"] = "pending"
@@ -1643,6 +1664,8 @@ def begin_batch_file_transfer(config: DashboardConfig, project_id: str, run_id: 
             if batch["status"] == "interrupted" and not was_uploaded and project_upload_bytes(config, project_id) + item["size_bytes"] > config.max_project_bytes:
                 raise upload_error("project_quota_exceeded", f"Project upload quota is {config.max_project_bytes} bytes", item["filename"], 413)
             item["status"] = "receiving"
+            item["transfer_id"] = uuid4().hex
+            item["transfer_updated_at"] = utc_now()
             if batch["status"] == "created":
                 batch["status"] = "uploading"
             batch["updated_at"] = utc_now()
@@ -1652,18 +1675,55 @@ def begin_batch_file_transfer(config: DashboardConfig, project_id: str, run_id: 
         return dict(item)
 
 
-def finish_batch_file_transfer(config: DashboardConfig, project_id: str, run_id: str, batch_id: str, file_index: int, status: str) -> None:
+def renew_batch_file_transfer(config: DashboardConfig, project_id: str, run_id: str, batch_id: str, file_index: int, transfer_id: str) -> bool:
+    with project_upload_lock(config, project_id):
+        batch = get_upload_batch(config, run_id, batch_id)
+        if file_index < 0 or file_index >= len(batch["files"]):
+            return False
+        item = batch["files"][file_index]
+        if item.get("status") != "receiving" or item.get("transfer_id") != transfer_id:
+            return False
+        item["transfer_updated_at"] = utc_now()
+        batch["updated_at"] = item["transfer_updated_at"]
+        write_json(batch_dir(config, run_id, batch_id) / "batch.json", batch)
+        return True
+
+
+def finish_batch_file_transfer(
+    config: DashboardConfig,
+    project_id: str,
+    run_id: str,
+    batch_id: str,
+    file_index: int,
+    status: str,
+    *,
+    transfer_id: str,
+    temporary_path: Path | None = None,
+) -> bool:
     if status not in {"pending", "uploaded"}:
         raise ValueError("Invalid transfer status")
     with project_upload_lock(config, project_id):
         batch = get_upload_batch(config, run_id, batch_id)
-        if batch["status"] not in {"uploading", "interrupted"} or batch["files"][file_index]["status"] != "receiving":
-            raise upload_error("batch_not_ready", "Batch transfer state changed")
-        batch["files"][file_index]["status"] = status
+        if file_index < 0 or file_index >= len(batch["files"]):
+            return False
+        item = batch["files"][file_index]
+        if batch["status"] not in {"uploading", "interrupted"} or item.get("status") != "receiving" or item.get("transfer_id") != transfer_id:
+            return False
+        if status == "uploaded":
+            if temporary_path is None:
+                raise ValueError("A temporary path is required to finish an uploaded transfer")
+            directory = batch_dir(config, run_id, batch_id)
+            source = ensure_child_path(directory, temporary_path)
+            destination = ensure_child_path(directory, directory / item["filename"])
+            source.replace(destination)
+        item["status"] = status
+        item.pop("transfer_id", None)
+        item.pop("transfer_updated_at", None)
         if status == "pending":
             batch["status"] = "interrupted"
         batch["updated_at"] = utc_now()
         write_json(batch_dir(config, run_id, batch_id) / "batch.json", batch)
+        return True
 
 
 def cleanup_abandoned_uploads(config: DashboardConfig, project_id: str, *, now: datetime | None = None) -> int:

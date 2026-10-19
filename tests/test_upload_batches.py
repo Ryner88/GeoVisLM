@@ -24,6 +24,8 @@ from geovis_lm.dashboard.operations import (
     ensure_storage,
     get_upload_batch,
     ingest_file_paths,
+    finish_batch_file_transfer,
+    TRANSFER_LEASE_SECONDS,
     write_json,
 )
 
@@ -135,6 +137,31 @@ def test_raw_file_transfer_checks_declared_size_and_records_progress(tmp_path, m
         asyncio.run(dashboard_app.stage_upload_file(project["id"], run["run_id"], canceled["batch_id"], 0, request))
     assert get_upload_batch(config, run["run_id"], canceled["batch_id"])["files"][0]["status"] == "pending"
     assert not list(batch_dir(config, run["run_id"], canceled["batch_id"]).glob("*.part"))
+
+
+def test_stale_receiving_transfer_can_be_claimed_after_restart(tmp_path):
+    config, _, run = setup_run(tmp_path)
+    batch = create_upload_batch(config, run, [{"filename": "a.csv", "size_bytes": 8}])
+    first = begin_batch_file_transfer(config, run["project_id"], run["run_id"], batch["batch_id"], 0)
+    directory = batch_dir(config, run["run_id"], batch["batch_id"])
+    (directory / f"a.csv.{first['transfer_id']}.part").write_bytes(b"partial")
+    manifest = get_upload_batch(config, run["run_id"], batch["batch_id"])
+    manifest["files"][0]["transfer_updated_at"] = (datetime.now(timezone.utc) - timedelta(seconds=TRANSFER_LEASE_SECONDS + 1)).isoformat()
+    write_json(directory / "batch.json", manifest)
+
+    resumed = begin_batch_file_transfer(config, run["project_id"], run["run_id"], batch["batch_id"], 0)
+    assert resumed["status"] == "receiving"
+    assert resumed["transfer_id"] != first["transfer_id"]
+    assert not (directory / f"a.csv.{first['transfer_id']}.part").exists()
+    assert not finish_batch_file_transfer(
+        config,
+        run["project_id"],
+        run["run_id"],
+        batch["batch_id"],
+        0,
+        "pending",
+        transfer_id=first["transfer_id"],
+    )
 
 
 def test_unexpected_validation_failure_removes_uncommitted_bytes(tmp_path, monkeypatch):

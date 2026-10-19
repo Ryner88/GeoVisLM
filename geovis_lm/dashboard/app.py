@@ -4,6 +4,7 @@ import json
 import secrets
 import tempfile
 import anyio
+import time
 from html import escape
 from urllib.parse import quote
 from urllib.parse import parse_qs
@@ -26,6 +27,7 @@ from geovis_lm.dashboard.operations import (
     create_upload_batch,
     begin_batch_file_transfer,
     finish_batch_file_transfer,
+    renew_batch_file_transfer,
     complete_upload_batch,
     cancel_upload_batch,
     cleanup_abandoned_uploads,
@@ -1316,24 +1318,58 @@ async def stage_upload_file(project_id: str, run_id: str, batch_id: str, file_in
     if item["status"] == "uploaded":
         return {"batch_id": batch_id, "filename": item["filename"], "status": "uploaded", "bytes_uploaded": item["size_bytes"]}
     destination = batch_dir(CONFIG, run_id, batch_id) / item["filename"]
-    temporary = destination.with_name(destination.name + ".part")
+    temporary = destination.with_name(f"{destination.name}.{item['transfer_id']}.part")
     received = 0
+    last_heartbeat = time.monotonic() - 30
     try:
         async with await anyio.open_file(temporary, "wb") as handle:
             async for chunk in request.stream():
                 received += len(chunk)
                 if received > item["size_bytes"] or received > CONFIG.max_upload_file_bytes:
                     raise upload_error("file_too_large", f"{item['filename']} exceeds its declared size or file limit", item["filename"], 413)
+                if time.monotonic() - last_heartbeat >= 30:
+                    renewed = await run_in_threadpool(
+                        renew_batch_file_transfer,
+                        CONFIG,
+                        project_id,
+                        run_id,
+                        batch_id,
+                        file_index,
+                        item["transfer_id"],
+                    )
+                    if not renewed:
+                        raise upload_error("transfer_lease_lost", "This transfer was resumed by another request", item["filename"])
+                    last_heartbeat = time.monotonic()
                 await handle.write(chunk)
         if received != item["size_bytes"]:
             raise upload_error("size_mismatch", f"{item['filename']} uploaded {received} of {item['size_bytes']} declared bytes", item["filename"])
-        await run_in_threadpool(temporary.replace, destination)
+        completed = await run_in_threadpool(
+            finish_batch_file_transfer,
+            CONFIG,
+            project_id,
+            run_id,
+            batch_id,
+            file_index,
+            "uploaded",
+            transfer_id=item["transfer_id"],
+            temporary_path=temporary,
+        )
+        if not completed:
+            raise upload_error("transfer_lease_lost", "This transfer was resumed by another request", item["filename"])
     except BaseException:
         await run_in_threadpool(temporary.unlink, missing_ok=True)
         with anyio.CancelScope(shield=True):
-            await run_in_threadpool(finish_batch_file_transfer, CONFIG, project_id, run_id, batch_id, file_index, "pending")
+            await run_in_threadpool(
+                finish_batch_file_transfer,
+                CONFIG,
+                project_id,
+                run_id,
+                batch_id,
+                file_index,
+                "pending",
+                transfer_id=item["transfer_id"],
+            )
         raise
-    await run_in_threadpool(finish_batch_file_transfer, CONFIG, project_id, run_id, batch_id, file_index, "uploaded")
     return {"batch_id": batch_id, "filename": item["filename"], "status": "uploaded", "bytes_uploaded": received}
 
 
