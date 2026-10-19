@@ -107,6 +107,7 @@ def test_staged_batch_requires_all_files_before_validation(tmp_path):
 
 
 def test_raw_file_transfer_checks_declared_size_and_records_progress(tmp_path, monkeypatch):
+    import anyio
     import geovis_lm.dashboard.app as dashboard_app
 
     config, project, run = setup_run(tmp_path)
@@ -140,6 +141,20 @@ def test_raw_file_transfer_checks_declared_size_and_records_progress(tmp_path, m
         asyncio.run(dashboard_app.stage_upload_file(project["id"], run["run_id"], canceled["batch_id"], 0, request))
     assert get_upload_batch(config, run["run_id"], canceled["batch_id"])["files"][0]["status"] == "pending"
     assert not list(batch_dir(config, run["run_id"], canceled["batch_id"]).glob("*.part"))
+
+    scoped = create_upload_batch(config, run, [{"filename": "c.csv", "size_bytes": 8}])
+
+    async def scoped_cancellation():
+        with anyio.CancelScope() as scope:
+            async def cancel_receive():
+                scope.cancel()
+                await anyio.sleep(0)
+
+            request = Request({"type": "http", "method": "PUT", "headers": [(b"x-geovis-user", b"owner")]}, cancel_receive)
+            await dashboard_app.stage_upload_file(project["id"], run["run_id"], scoped["batch_id"], 0, request)
+
+    asyncio.run(scoped_cancellation())
+    assert get_upload_batch(config, run["run_id"], scoped["batch_id"])["files"][0]["status"] == "pending"
 
 
 def test_stale_receiving_transfer_can_be_claimed_after_restart(tmp_path):

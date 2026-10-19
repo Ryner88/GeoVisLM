@@ -1397,8 +1397,8 @@ async def stage_upload_file(project_id: str, run_id: str, batch_id: str, file_in
         if not completed:
             raise upload_error("transfer_lease_lost", "This transfer was resumed by another request", item["filename"])
     except BaseException:
-        await run_in_threadpool(temporary.unlink, missing_ok=True)
         with anyio.CancelScope(shield=True):
+            await run_in_threadpool(temporary.unlink, missing_ok=True)
             await run_in_threadpool(
                 finish_batch_file_transfer,
                 CONFIG,
