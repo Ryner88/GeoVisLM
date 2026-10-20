@@ -1,8 +1,8 @@
 # GeoVisLM File Ingestion Policy
 
-This document defines the operational policy for accepting, validating,
-processing, and cleaning up uploaded geospatial files. It is a specification
-only; implementation can follow after the project/run model is implemented.
+This document defines the implemented upload limits and cleanup behavior for
+project runs. The browser uses staged batch uploads; the legacy JSON/base64
+endpoint remains available for API clients.
 
 ## Goals
 
@@ -58,12 +58,18 @@ Optional sidecar files:
 - `.sbn`, `.sbx`: spatial index
 - `.xml`: metadata
 
+An `.xml` metadata sidecar may use either `rivers.xml` or the common
+`rivers.shp.xml` name; both belong to the `rivers` dataset.
+
 Rules:
 
 - All bundle files must share the same base filename.
 - Bundle files must be attached to the same upload batch.
 - A Shapefile bundle is not valid until required files are present.
 - Missing `.prj` should produce a warning and require manual CRS selection before analysis.
+- Until manual CRS selection is available, analysis stops with `missing_crs`
+  when an uploaded Shapefile has no known CRS. Upload the bundle with `.prj`
+  in a new analysis to proceed.
 - Extra files with the same base name can be stored as sidecars when extension is allowed.
 - Mixed-base Shapefile uploads should be split into separate logical datasets.
 
@@ -84,6 +90,7 @@ Initial limits:
 - Maximum single file size: 250 MB
 - Maximum batch size: 1 GB total
 - Maximum files per batch: 50
+- Maximum stored input bytes per project: 5 GB
 - Maximum filename length: 180 characters
 - Maximum extracted or normalized path length: 512 characters
 
@@ -92,6 +99,14 @@ Operational limits should be configurable through environment variables:
 - `GEOVIS_MAX_UPLOAD_FILE_MB`
 - `GEOVIS_MAX_UPLOAD_BATCH_MB`
 - `GEOVIS_MAX_BATCH_FILES`
+- `GEOVIS_MAX_PROJECT_MB`
+
+The project quota counts retained valid inputs and in-progress staged bytes
+across all runs in that project. Invalid inputs retain validation metadata but
+their bytes are deleted, so they do not consume the project quota. Uploads that
+would exceed any limit return HTTP 413 before the run is changed. File names
+must be unique within a batch and within a run; use a new run to replace an
+input. Limits apply to both the staged and legacy JSON endpoints.
 
 Rejected uploads should return a readable error that includes the violated
 limit and the affected filename.
@@ -169,12 +184,47 @@ Shapefile bundles:
 
 ## Batch Upload Behavior
 
+The run page accepts several local files in one selection and shows byte
+transfer progress for each file, followed by a visible terminal validation
+result. The browser starts a batch with
+`POST /api/projects/{project_id}/runs/{run_id}/batches`, sends each file as raw
+bytes with `PUT .../batches/{batch_id}/files/{file_index}`, and calls
+`POST .../batches/{batch_id}/complete` when all files have arrived. A complete
+batch can be queried with `GET .../batches/{batch_id}`. These endpoints use the
+same project upload permission as the original file endpoint. The server
+validates the batch only after every declared file has arrived, so Shapefile
+parts can be opened together. Each Shapefile part shares a `dataset_id` based
+on its filename stem. A missing or corrupt required part invalidates the whole
+bundle. Valid unrelated datasets can still finish in the same batch.
+Batch creation accepts a client idempotency key, so a retry after a lost
+creation response returns the original batch instead of reserving quota again.
+If a transfer fails, the page keeps the batch ID so the same file selection can
+resume after a retry, including after a page reload when browser storage is
+available. Resuming reuploads selected files, including files previously staged,
+so changed local content cannot silently reuse old staged bytes. It also offers Cancel,
+which calls `DELETE .../batches/{batch_id}` and removes uncommitted staged files.
+Completed batches cannot be canceled because their valid inputs belong to the
+run. A failed finalization can be canceled and started again.
+
+The original JSON/base64 endpoint at `POST .../runs/{run_id}/files` remains
+available. It accepts multiple files in one request and returns the same
+per-file result shape, but staged uploads avoid buffering a whole large batch
+in the browser. JSON request bodies are capped at 16 MB before parsing; larger
+files must use staged uploads.
+
+Clients that send `multipart/form-data` can use
+`POST .../runs/{run_id}/files/multipart` with repeated `files` parts. This
+endpoint applies the same quotas, authorization, bundle grouping, and per-file
+validation results. The staged API is preferred for large batches because it
+reports transfer progress and reserves project quota before file bytes arrive.
+
 Batch status is aggregate; file status is per-file.
 
 Batch statuses:
 
 - `created`
 - `uploading`
+- `interrupted`
 - `validating`
 - `partially_valid`
 - `valid`
@@ -231,9 +281,28 @@ Suggested error codes:
 
 Temporary upload files:
 
-- Delete incomplete uploads after 24 hours.
-- Delete failed validation temp files after 7 days unless debugging is enabled.
-- Keep validation metadata even when temp bytes are deleted.
+- Incomplete or abandoned staged batches are deleted 24 hours after their last
+  successful upload activity. Batch creation triggers a cleanup sweep for its
+  project, and the analysis worker sweeps all projects hourly. Cleanup only
+  visits run input staging directories.
+- An interrupted or oversized file transfer deletes its `.part` file
+  immediately. The interrupted batch retains already uploaded files in its
+  quota accounting and releases reservations for pending files. A resumed
+  transfer reserves its own bytes again before receiving data. Cancel removes
+  all staged files and their quota use. A failed finalization deletes staged
+  file bytes immediately.
+- Files rejected by validation are deleted immediately, while their per-file
+  metadata and errors remain on the run. Successful validation moves files to
+  `inputs/validated` and removes the staged copies.
+- Finalization, queuing, and the transition to running use the same project
+  lock. Finalization verifies that the run is still editable while holding that
+  lock, so an upload cannot reset a queued or running analysis to `uploaded`.
+- Run and batch metadata are written with atomic replacement. If a process
+  stops after run inputs are committed but before the batch receipt is saved,
+  retrying finalization reconstructs the receipt from input records and does
+  not count the staged reservation twice.
+- Completed batch receipts are removed by the same 24-hour staging sweep; the
+  run's input records remain available.
 
 Completed run files:
 
@@ -247,7 +316,7 @@ Suggested retention:
 - Archived project files: retain until manually deleted or retention policy expires
 - Deleted project files: purge after 30 days
 - Run logs: retain 90 days by default
-- Temporary chunks: purge after 24 hours
+- Temporary staged files and batch receipts: purge after 24 hours
 
 Cleanup must never remove:
 

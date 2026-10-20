@@ -205,6 +205,7 @@ Operational settings are environment-driven:
 - `GEOVIS_MAX_UPLOAD_FILE_MB`: maximum single upload size
 - `GEOVIS_MAX_UPLOAD_BATCH_MB`: maximum batch upload size
 - `GEOVIS_MAX_BATCH_FILES`: maximum files per upload batch
+- `GEOVIS_MAX_PROJECT_MB`: maximum retained and staged input bytes per project (default 5120 MB)
 - `GEOVIS_DATABASE_URL`: optional PostGIS connection string
 
 When authentication is required, browser users can create an account at
