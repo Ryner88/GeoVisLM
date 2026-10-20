@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import base64
 import csv
+import fcntl
 import hmac
 import hashlib
 import json
+import logging
 import mimetypes
 import os
 import re
 import secrets
 import shutil
-import fcntl
 import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -22,6 +23,8 @@ from uuid import uuid4
 import bleach
 from fastapi import HTTPException, Request
 from markdown_it import MarkdownIt
+
+logger = logging.getLogger(__name__)
 
 
 RUN_STATUSES = {
@@ -304,6 +307,10 @@ def project_audit_path(config: DashboardConfig, project_id: str) -> Path:
     return project_dir(config, project_id) / "audit.jsonl"
 
 
+def user_notifications_path(config: DashboardConfig, user_id: str) -> Path:
+    return config.output_root / "notifications" / f"{safe_id(user_id, 'user_id')}.json"
+
+
 def run_metadata_path(config: DashboardConfig, run_id: str) -> Path:
     return run_dir(config, run_id) / "metadata.json"
 
@@ -581,8 +588,14 @@ def append_project_audit_event(
     }
     path = project_audit_path(config, project_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(event, sort_keys=True) + "\n")
+    with path.with_suffix(".lock").open("a+b") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(event, sort_keys=True) + "\n")
+                handle.flush()
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
     return event
 
 
@@ -590,7 +603,147 @@ def list_project_audit_events(config: DashboardConfig, project_id: str) -> list[
     path = project_audit_path(config, project_id)
     if not path.exists():
         return []
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    with path.with_suffix(".lock").open("a+b") as lock:
+        fcntl.flock(lock, fcntl.LOCK_SH)
+        try:
+            events = []
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    events.append(json.loads(line))
+                except json.JSONDecodeError:
+                    logger.warning("Ignoring malformed project audit record in %s", path)
+            return events
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def _append_user_notification(
+    config: DashboardConfig,
+    user_id: str,
+    event: dict[str, Any],
+    title: str,
+    message: str,
+    href: str,
+) -> dict[str, Any]:
+    path = user_notifications_path(config, user_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    notification = {
+        "id": uuid4().hex,
+        "user_id": user_id,
+        "event_id": event["id"],
+        "project_id": event["project_id"],
+        "event_type": event["event_type"],
+        "title": title,
+        "message": message,
+        "href": href,
+        "created_at": event["created_at"],
+        "read_at": None,
+    }
+    with path.with_suffix(".lock").open("a+b") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"user_id": user_id, "notifications": []}
+            data.setdefault("notifications", []).append(notification)
+            unread = [item for item in data["notifications"] if not item.get("read_at")]
+            read = [item for item in data["notifications"] if item.get("read_at")]
+            data["notifications"] = unread + read[-500:]
+            write_json(path, data)
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+    return notification
+
+
+def notify_project_collaborators(
+    config: DashboardConfig,
+    project: dict[str, Any],
+    event: dict[str, Any],
+    title: str,
+    message: str,
+    href: str,
+    *,
+    recipient_user_ids: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    if recipient_user_ids is None:
+        recipients = {project["owner_user_id"]}
+        recipients.update(
+            member["user_id"] for member in read_project_members(config, project["id"]).get("members", [])
+        )
+        recipients.discard(event.get("actor_user_id"))
+    else:
+        recipients = set(recipient_user_ids)
+    delivered = []
+    for user_id in sorted(recipients):
+        if not user_id:
+            continue
+        try:
+            delivered.append(_append_user_notification(config, user_id, event, title, message, href))
+        except (OSError, ValueError, HTTPException):
+            logger.exception("Could not deliver project notification to user %s", user_id)
+    return delivered
+
+
+def list_user_notifications(
+    config: DashboardConfig,
+    principal: dict[str, str],
+    limit: int = 50,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    safe_limit = max(1, min(int(limit), 500))
+    safe_offset = max(0, int(offset))
+    path = user_notifications_path(config, principal["user_id"])
+    if not path.exists():
+        return []
+    try:
+        notifications = json.loads(path.read_text(encoding="utf-8")).get("notifications", [])
+    except (OSError, ValueError):
+        return []
+    allowed_project_ids = {project["id"] for project in list_projects(config, principal)}
+    visible = [item for item in notifications if item.get("project_id") in allowed_project_ids]
+    ordered = sorted(visible, key=lambda item: (item.get("created_at", ""), item.get("id", "")), reverse=True)
+    return ordered[safe_offset:safe_offset + safe_limit]
+
+
+def unread_user_notification_count(config: DashboardConfig, principal: dict[str, str]) -> int:
+    path = user_notifications_path(config, principal["user_id"])
+    if not path.exists():
+        return 0
+    try:
+        notifications = json.loads(path.read_text(encoding="utf-8")).get("notifications", [])
+    except (OSError, ValueError):
+        return 0
+    allowed_project_ids = {project["id"] for project in list_projects(config, principal)}
+    return sum(
+        1
+        for item in notifications
+        if item.get("project_id") in allowed_project_ids and not item.get("read_at")
+    )
+
+
+def mark_user_notification_read(config: DashboardConfig, principal: dict[str, str], notification_id: str) -> dict[str, Any]:
+    safe_notification_id = safe_id(notification_id, "notification_id")
+    path = user_notifications_path(config, principal["user_id"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.with_suffix(".lock").open("a+b") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            if not path.exists():
+                raise HTTPException(status_code=404, detail="Notification not found")
+            data = json.loads(path.read_text(encoding="utf-8"))
+            notification = next((item for item in data.get("notifications", []) if item.get("id") == safe_notification_id), None)
+            if notification is None:
+                raise HTTPException(status_code=404, detail="Notification not found")
+            if notification.get("user_id") not in {None, principal["user_id"]}:
+                raise HTTPException(status_code=404, detail="Notification not found")
+            project = get_project(config, notification["project_id"])
+            if not can_view_project(config, project, principal):
+                raise _project_permission_error(False)
+            notification["read_at"] = notification.get("read_at") or utc_now()
+            write_json(path, data)
+            return notification
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
 
 
 def project_member_for_principal(
@@ -653,6 +806,17 @@ def invite_project_member(
     email: str,
     role: str = "viewer",
 ) -> dict[str, Any]:
+    with project_upload_lock(config, project["id"]):
+        return _invite_project_member_locked(config, project, principal, email, role)
+
+
+def _invite_project_member_locked(
+    config: DashboardConfig,
+    project: dict[str, Any],
+    principal: dict[str, str],
+    email: str,
+    role: str = "viewer",
+) -> dict[str, Any]:
     assert_project_owner(config, project, principal)
     normalized_role = role.strip().lower()
     if normalized_role not in PROJECT_MEMBER_ROLES:
@@ -692,17 +856,36 @@ def invite_project_member(
     invitations.setdefault("invitations", []).append(invitation)
     write_project_members(config, project["id"], members)
     write_project_invitations(config, project["id"], invitations)
-    append_project_audit_event(
+    event = append_project_audit_event(
         config,
         project["id"],
         "project.member_invited",
         principal["user_id"],
         {"target_user_id": user["id"], "target_email": user["email"], "role": normalized_role},
     )
+    notify_project_collaborators(
+        config,
+        project,
+        event,
+        "Project invitation",
+        f"You now have access to {project['name']}.",
+        f"/projects/{project['id']}",
+        recipient_user_ids=[user["id"]],
+    )
     return {"project_id": project["id"], "invitation": invitation, "member": member}
 
 
 def revoke_project_member(
+    config: DashboardConfig,
+    project: dict[str, Any],
+    principal: dict[str, str],
+    user_id: str,
+) -> dict[str, Any]:
+    with project_upload_lock(config, project["id"]):
+        return _revoke_project_member_locked(config, project, principal, user_id)
+
+
+def _revoke_project_member_locked(
     config: DashboardConfig,
     project: dict[str, Any],
     principal: dict[str, str],
@@ -744,6 +927,7 @@ def create_project(config: DashboardConfig, name: str, owner_user_id: str, descr
     }
     write_json(project_metadata_path(config, project_id), project)
     write_project_members(config, project_id, {"members": []})
+    append_project_audit_event(config, project_id, "project.created", owner_user_id, {"name": name})
     return project
 
 
@@ -812,6 +996,13 @@ def create_run_record(
         },
     }
     write_json(run_metadata_path(config, run_id), metadata)
+    append_project_audit_event(
+        config,
+        project["id"],
+        "run.created",
+        created_by_user_id,
+        {"run_id": run_id, "run_name": metadata["name"], "workflow_type": workflow_type},
+    )
     return metadata
 
 
@@ -909,8 +1100,15 @@ def list_visible_runs(config: DashboardConfig, principal: dict[str, str]) -> lis
     return [run for run in list_runs(config) if run.get("project_id") in allowed_project_ids]
 
 
-def update_run(config: DashboardConfig, run_id: str, status_message: str | None = None, **updates) -> dict[str, Any]:
+def update_run(
+    config: DashboardConfig,
+    run_id: str,
+    status_message: str | None = None,
+    actor_user_id: str | None = None,
+    **updates,
+) -> dict[str, Any]:
     metadata = get_run(config, run_id)
+    previous_status = metadata.get("status")
     status = updates.get("status")
     workflow_type = updates.get("workflow_type")
     if workflow_type is not None:
@@ -936,6 +1134,30 @@ def update_run(config: DashboardConfig, run_id: str, status_message: str | None 
         if status == "failed":
             metadata["failed_at"] = now
     write_json(run_metadata_path(config, run_id), metadata)
+    if status and status != previous_status:
+        project = get_project(config, metadata["project_id"])
+        event = append_project_audit_event(
+            config,
+            project["id"],
+            "run.status_changed",
+            actor_user_id or "system",
+            {
+                "run_id": run_id,
+                "run_name": metadata.get("name", run_id),
+                "previous_status": previous_status,
+                "status": status,
+                "message": status_message or status,
+            },
+        )
+        if status == "completed":
+            notify_project_collaborators(
+                config,
+                project,
+                event,
+                "Analysis completed",
+                f"{metadata.get('name', run_id)} finished successfully.",
+                f"/runs/{run_id}",
+            )
     return metadata
 
 
@@ -1158,12 +1380,20 @@ def create_report_comment(
     data = read_report_comments(config, run["run_id"])
     data.setdefault("comments", []).append(comment)
     write_report_comments(config, run["run_id"], data)
-    append_project_audit_event(
+    event = append_project_audit_event(
         config,
         project["id"],
         "report_comment.created",
         principal["user_id"],
         {"run_id": run["run_id"], "comment_id": comment["id"], "output_key": REPORT_COMMENT_OUTPUT_KEY},
+    )
+    notify_project_collaborators(
+        config,
+        project,
+        event,
+        "New report comment",
+        f"A new comment was added to {run.get('name', run['run_id'])}.",
+        f"/runs/{run['run_id']}",
     )
     return public_report_comment(config, comment)
 
@@ -1484,9 +1714,15 @@ def validate_shapefile_bundle(file_records: list[dict[str, Any]]) -> list[dict[s
     return file_records
 
 
-def ingest_file_paths(config: DashboardConfig, run: dict[str, Any], paths: list[tuple[str, Path, str | None]]) -> dict[str, Any]:
+def ingest_file_paths(
+    config: DashboardConfig,
+    run: dict[str, Any],
+    paths: list[tuple[str, Path, str | None]],
+    *,
+    actor_user_id: str | None = None,
+) -> dict[str, Any]:
     with project_upload_lock(config, run["project_id"]):
-        return _ingest_file_paths_locked(config, run, paths)
+        return _ingest_file_paths_locked(config, run, paths, actor_user_id=actor_user_id)
 
 
 def reserved_input_names(run: dict[str, Any]) -> set[str]:
@@ -1497,7 +1733,15 @@ def reserved_input_names(run: dict[str, Any]) -> set[str]:
     }
 
 
-def _ingest_file_paths_locked(config: DashboardConfig, run: dict[str, Any], paths: list[tuple[str, Any, str | None]], *, staged_bytes: int = 0, source_batch_id: str | None = None) -> dict[str, Any]:
+def _ingest_file_paths_locked(
+    config: DashboardConfig,
+    run: dict[str, Any],
+    paths: list[tuple[str, Any, str | None]],
+    *,
+    staged_bytes: int = 0,
+    source_batch_id: str | None = None,
+    actor_user_id: str | None = None,
+) -> dict[str, Any]:
     if not paths:
         raise upload_error("empty_batch", "Select at least one file")
     if len(paths) > config.max_batch_files:
@@ -1597,13 +1841,34 @@ def _ingest_file_paths_locked(config: DashboardConfig, run: dict[str, Any], path
                 validated_path = ensure_child_path(validated_dir, validated_dir / record["stored_filename"])
                 shutil.move(raw_path, validated_path)
                 record["path"] = str(validated_path)
-        run = update_run(config, run["run_id"], status="uploaded", status_message="Files validated", inputs=run.get("inputs", []) + records)
+        run = update_run(
+            config,
+            run["run_id"],
+            status="uploaded",
+            status_message="Files validated",
+            actor_user_id=actor_user_id,
+            inputs=run.get("inputs", []) + records,
+        )
     except Exception:
         for name in names:
             (raw_dir / name).unlink(missing_ok=True)
             (validated_dir / name).unlink(missing_ok=True)
         raise
     batch_status = "valid" if all(record["status"] == "valid" for record in records) else "completed_with_errors"
+    append_project_audit_event(
+        config,
+        run["project_id"],
+        "upload.completed",
+        actor_user_id or run.get("created_by_user_id") or "system",
+        {
+            "run_id": run["run_id"],
+            "run_name": run.get("name", run["run_id"]),
+            "files": [record["stored_filename"] for record in records],
+            "file_count": len(records),
+            "size_bytes": sum(sizes),
+            "batch_status": batch_status,
+        },
+    )
     return {"run_id": run["run_id"], "batch_status": batch_status, "files": records, "run": run}
 
 
@@ -1611,6 +1876,8 @@ def ingest_base64_files(
     config: DashboardConfig,
     run: dict[str, Any],
     uploads: list[dict[str, str]],
+    *,
+    actor_user_id: str | None = None,
 ) -> dict[str, Any]:
     if len(uploads) > config.max_batch_files:
         raise upload_error("too_many_files", f"Maximum files per batch is {config.max_batch_files}", status=413)
@@ -1630,7 +1897,7 @@ def ingest_base64_files(
             path = Path(temporary) / str(index)
             path.write_bytes(content)
             paths.append((upload["filename"], path, upload.get("content_type")))
-        return ingest_file_paths(config, run, paths)
+        return ingest_file_paths(config, run, paths, actor_user_id=actor_user_id)
 
 
 def batch_dir(config: DashboardConfig, run_id: str, batch_id: str) -> Path:
@@ -1936,7 +2203,13 @@ def create_upload_batch(config: DashboardConfig, run: dict[str, Any], files: lis
     return batch
 
 
-def complete_upload_batch(config: DashboardConfig, run: dict[str, Any], batch_id: str) -> dict[str, Any]:
+def complete_upload_batch(
+    config: DashboardConfig,
+    run: dict[str, Any],
+    batch_id: str,
+    *,
+    actor_user_id: str | None = None,
+) -> dict[str, Any]:
     directory = batch_dir(config, run["run_id"], batch_id)
     with project_upload_lock(config, run["project_id"]):
         batch = get_upload_batch(config, run["run_id"], batch_id)
@@ -1964,7 +2237,14 @@ def complete_upload_batch(config: DashboardConfig, run: dict[str, Any], batch_id
         write_json(directory / "batch.json", batch)
         paths = [(item["original_filename"], directory / item["filename"], item.get("content_type")) for item in batch["files"]]
         try:
-            result = _ingest_file_paths_locked(config, run, paths, staged_bytes=sum(item["size_bytes"] for item in batch["files"]), source_batch_id=batch_id)
+            result = _ingest_file_paths_locked(
+                config,
+                run,
+                paths,
+                staged_bytes=sum(item["size_bytes"] for item in batch["files"]),
+                source_batch_id=batch_id,
+                actor_user_id=actor_user_id,
+            )
         except Exception:
             batch["status"] = "failed"
             batch["updated_at"] = utc_now()

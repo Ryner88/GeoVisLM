@@ -21,6 +21,7 @@ from geovis_lm.dashboard.operations import (
     DASHBOARD_SESSION_COOKIE,
     assert_project_access,
     copy_sample_dem_to_run,
+    append_project_audit_event,
     authenticate_user,
     create_dashboard_session,
     create_job_record,
@@ -58,6 +59,9 @@ from geovis_lm.dashboard.operations import (
     list_output_artifacts,
     invite_project_member,
     list_project_audit_events,
+    list_user_notifications,
+    mark_user_notification_read,
+    unread_user_notification_count,
     list_report_comments,
     list_project_members,
     list_projects,
@@ -880,16 +884,16 @@ def project_for_run(run: dict) -> dict:
     return get_project(CONFIG, run["project_id"])
 
 
-def finish_analysis_status(run_id: str, **updates) -> dict:
+def finish_analysis_status(run_id: str, *, actor_user_id: str | None = None, **updates) -> dict:
     initial = get_run(CONFIG, run_id)
     with project_upload_lock(CONFIG, initial["project_id"]):
         current = get_run(CONFIG, run_id)
         if current["status"] != "running":
             return current
-        return update_run(CONFIG, run_id, **updates)
+        return update_run(CONFIG, run_id, actor_user_id=actor_user_id, **updates)
 
 
-def run_analysis_workflow(run_id: str, *, from_worker: bool = False) -> dict:
+def run_analysis_workflow(run_id: str, *, from_worker: bool = False, actor_user_id: str | None = None) -> dict:
   initial = get_run(CONFIG, run_id)
   with project_upload_lock(CONFIG, initial["project_id"]):
     metadata = get_run(CONFIG, run_id)
@@ -901,7 +905,8 @@ def run_analysis_workflow(run_id: str, *, from_worker: bool = False) -> dict:
         raise upload_error("run_not_ready", "Use the queued job to run this analysis")
       if metadata["status"] not in {"created", "uploaded", "retrying"}:
         raise upload_error("run_not_ready", "Analysis cannot start from this state")
-    metadata = update_run(CONFIG, run_id, status="running", status_message="Analysis started")
+    event_actor = None if from_worker else actor_user_id
+    metadata = update_run(CONFIG, run_id, status="running", status_message="Analysis started", actor_user_id=event_actor)
   workflow_type = normalize_workflow_type(metadata.get("workflow_type", "terrain"))
   template = resolve_workflow_template(workflow_type)
 
@@ -909,6 +914,7 @@ def run_analysis_workflow(run_id: str, *, from_worker: bool = False) -> dict:
   if recommendation and recommendation.get("status") != "approved":
     return finish_analysis_status(
       run_id,
+      actor_user_id=event_actor,
       workflow_type=workflow_type,
       status="failed",
       status_message="Recommendation approval required",
@@ -921,6 +927,7 @@ def run_analysis_workflow(run_id: str, *, from_worker: bool = False) -> dict:
   if not dem_path or not dem_path.exists():
     return finish_analysis_status(
       run_id,
+      actor_user_id=event_actor,
       workflow_type=workflow_type,
       status="failed",
       status_message="No valid DEM input found",
@@ -939,6 +946,7 @@ def run_analysis_workflow(run_id: str, *, from_worker: bool = False) -> dict:
   if missing_crs_inputs:
     return finish_analysis_status(
       run_id,
+      actor_user_id=event_actor,
       workflow_type=workflow_type,
       status="failed",
       status_message="Shapefile CRS is missing",
@@ -984,6 +992,7 @@ def run_analysis_workflow(run_id: str, *, from_worker: bool = False) -> dict:
   except AnalysisExecutionError as exc:
     return finish_analysis_status(
       run_id,
+      actor_user_id=event_actor,
       workflow_type=workflow_type,
       status="failed",
       status_message=f"{workflow_label} failed",
@@ -995,6 +1004,7 @@ def run_analysis_workflow(run_id: str, *, from_worker: bool = False) -> dict:
   except Exception as exc:
     return finish_analysis_status(
       run_id,
+      actor_user_id=event_actor,
       workflow_type=workflow_type,
       status="failed",
       status_message=f"{workflow_label} failed",
@@ -1006,6 +1016,7 @@ def run_analysis_workflow(run_id: str, *, from_worker: bool = False) -> dict:
 
   result = finish_analysis_status(
     run_id,
+    actor_user_id=event_actor,
     workflow_type=workflow_type,
     status="completed",
     status_message=f"{workflow_label} completed",
@@ -1042,7 +1053,7 @@ def readyz() -> dict:
 
 
 @app.get("/", response_class=HTMLResponse)
-def index(request: Request) -> str:
+def index(request: Request, notification_offset: int = 0) -> str:
     principal = principal_from_request(request, CONFIG)
     projects = list_projects(CONFIG, principal)
     projects_by_id = {project["id"]: project for project in projects}
@@ -1057,6 +1068,20 @@ def index(request: Request) -> str:
         f"<a href='/projects/{run['project_id']}'>{escape(projects_by_id[run['project_id']]['name'])}</a></li>"
         for run in runs[:20]
     ) or "<li>No runs yet</li>"
+    notifications = list_user_notifications(CONFIG, principal, 20, notification_offset)
+    notification_items = "\n".join(
+        "<li>"
+        f"<a href='{escape(item['href'])}'>{escape(item['title'])}</a> — {escape(item['message'])} "
+        f"<small>{'Unread' if not item.get('read_at') else 'Read'}</small>"
+        + (f"<form method='post' action='/dashboard/notifications/{escape(item['id'])}/read'><button>Mark read</button></form>" if not item.get("read_at") else "")
+        + "</li>"
+        for item in notifications
+    ) or "<li>No notifications</li>"
+    notification_paging = ""
+    if notification_offset:
+        notification_paging += f"<a href='/?notification_offset={max(0, notification_offset - 20)}'>Newer notifications</a> "
+    if len(notifications) == 20:
+        notification_paging += f"<a href='/?notification_offset={notification_offset + 20}'>Older notifications</a>"
     return f"""
 <!doctype html>
 <html lang="en">
@@ -1087,6 +1112,11 @@ def index(request: Request) -> str:
       <section>
         <h2>Recent Runs</h2>
         <ul>{run_items}</ul>
+      </section>
+      <section>
+        <h2>Notifications</h2>
+        <ul>{notification_items}</ul>
+        <nav>{notification_paging}</nav>
       </section>
     </main>
   </body>
@@ -1143,6 +1173,47 @@ def list_project_audit_events_api(project_id: str, request: Request) -> dict:
     return {"project_id": project_id, "events": list_project_audit_events(CONFIG, project_id)}
 
 
+@app.get("/api/projects/{project_id}/timeline")
+def project_timeline_api(project_id: str, request: Request, limit: int = Query(default=100, ge=1, le=500)) -> dict:
+    principal = principal_from_request(request, CONFIG)
+    project = get_project(CONFIG, project_id)
+    assert_project_access(CONFIG, project, principal, "view")
+    events = [public_timeline_event(event) for event in list_project_audit_events(CONFIG, project_id)]
+    events = sorted(events, key=lambda event: (event.get("created_at", ""), event.get("id", "")), reverse=True)
+    return {"project_id": project_id, "events": events[:limit]}
+
+
+def public_timeline_event(event: dict) -> dict:
+    if event.get("event_type", "").startswith("project.member_"):
+        return {**event, "details": {"message": "Project membership changed"}}
+    return event
+
+
+@app.get("/api/notifications")
+def notifications_api(
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = 0,
+) -> dict:
+    principal = principal_from_request(request, CONFIG)
+    notifications = list_user_notifications(CONFIG, principal, limit, offset)
+    unread_count = unread_user_notification_count(CONFIG, principal)
+    return {"notifications": notifications, "unread_count": unread_count}
+
+
+@app.post("/api/notifications/{notification_id}/read")
+def mark_notification_read_api(notification_id: str, request: Request) -> dict:
+    principal = principal_from_request(request, CONFIG)
+    return {"notification": mark_user_notification_read(CONFIG, principal, notification_id)}
+
+
+@app.post("/dashboard/notifications/{notification_id}/read")
+def mark_notification_read_form(notification_id: str, request: Request) -> RedirectResponse:
+    principal = principal_from_request(request, CONFIG)
+    mark_user_notification_read(CONFIG, principal, notification_id)
+    return RedirectResponse(url="/", status_code=303)
+
+
 @app.post("/api/projects/{project_id}/runs")
 def create_project_run(project_id: str, payload: RunCreate, request: Request) -> dict:
     principal = principal_from_request(request, CONFIG)
@@ -1168,6 +1239,7 @@ def list_project_runs(project_id: str, request: Request) -> dict:
 
 @app.post("/api/projects/{project_id}/runs/{run_id}/files")
 async def upload_project_run_files(project_id: str, run_id: str, request: Request) -> dict:
+    principal = principal_from_request(request, CONFIG)
     run = authorized_upload_run(project_id, run_id, request)
     limit = min(CONFIG.max_upload_batch_bytes * 2, 16 * 1024 * 1024)
     body = bytearray()
@@ -1179,11 +1251,18 @@ async def upload_project_run_files(project_id: str, run_id: str, request: Reques
         payload = BatchUploadPayload.model_validate_json(body)
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=[{"loc": error["loc"], "msg": error["msg"], "type": error["type"]} for error in exc.errors()]) from exc
-    return await run_in_threadpool(ingest_base64_files, CONFIG, run, [item.model_dump() for item in payload.files])
+    return await run_in_threadpool(
+        ingest_base64_files,
+        CONFIG,
+        run,
+        [item.model_dump() for item in payload.files],
+        actor_user_id=principal["user_id"],
+    )
 
 
 @app.post("/api/projects/{project_id}/runs/{run_id}/files/multipart")
 async def upload_project_run_multipart(project_id: str, run_id: str, request: Request) -> dict:
+    principal = principal_from_request(request, CONFIG)
     run = authorized_upload_run(project_id, run_id, request)
     content_length = request.headers.get("content-length")
     if content_length:
@@ -1197,7 +1276,7 @@ async def upload_project_run_multipart(project_id: str, run_id: str, request: Re
         declared_length = None
     reservation = await run_in_threadpool(reserve_multipart_upload, CONFIG, run, declared_length)
     try:
-        return await _upload_project_run_multipart(request, run, reservation)
+        return await _upload_project_run_multipart(request, run, reservation, principal["user_id"])
     finally:
         with anyio.CancelScope(shield=True):
             await run_in_threadpool(
@@ -1209,7 +1288,7 @@ async def upload_project_run_multipart(project_id: str, run_id: str, request: Re
             )
 
 
-async def _upload_project_run_multipart(request: Request, run: dict, reservation: dict) -> dict:
+async def _upload_project_run_multipart(request: Request, run: dict, reservation: dict, actor_user_id: str) -> dict:
     wire_limit = reservation["wire_limit"]
     received = 0
     last_renewed = time.monotonic() - 30
@@ -1254,10 +1333,10 @@ async def _upload_project_run_multipart(request: Request, run: dict, reservation
                 raise upload_error("batch_too_large", f"Batch exceeds the {CONFIG.max_upload_batch_bytes} byte limit", status=413)
             await upload.seek(0)
             paths.append((upload.filename or name, upload.file, upload.content_type))
-        return await run_in_threadpool(_ingest_multipart_paths_with_lock, run, paths, total_size, reservation)
+        return await run_in_threadpool(_ingest_multipart_paths_with_lock, run, paths, total_size, reservation, actor_user_id)
 
 
-def _ingest_multipart_paths_with_lock(run: dict, paths: list, total_size: int, reservation: dict) -> dict:
+def _ingest_multipart_paths_with_lock(run: dict, paths: list, total_size: int, reservation: dict, actor_user_id: str) -> dict:
     project_id = run["project_id"]
     with project_upload_lock(CONFIG, project_id):
         try:
@@ -1271,6 +1350,7 @@ def _ingest_multipart_paths_with_lock(run: dict, paths: list, total_size: int, r
                 current_run,
                 paths,
                 staged_bytes=reservation["reserved_bytes"],
+                actor_user_id=actor_user_id,
             )
         finally:
             _release_multipart_upload_reservation_locked(CONFIG, run["run_id"], reservation["reservation_id"])
@@ -1415,8 +1495,9 @@ async def stage_upload_file(project_id: str, run_id: str, batch_id: str, file_in
 
 @app.post("/api/projects/{project_id}/runs/{run_id}/batches/{batch_id}/complete")
 def finalize_upload_batch(project_id: str, run_id: str, batch_id: str, request: Request) -> dict:
+    principal = principal_from_request(request, CONFIG)
     run = authorized_upload_run(project_id, run_id, request, require_editable=False)
-    return complete_upload_batch(CONFIG, run, batch_id)
+    return complete_upload_batch(CONFIG, run, batch_id, actor_user_id=principal["user_id"])
 
 
 @app.delete("/api/projects/{project_id}/runs/{run_id}/batches/{batch_id}")
@@ -1440,7 +1521,7 @@ def queue_run(run_id: str, request: Request) -> dict:
         run = get_run(CONFIG, run_id)
         if run["status"] not in {"created", "uploaded", "retrying"}:
             raise upload_error("run_not_ready", "Analysis cannot be queued from this state")
-        queued = update_run(CONFIG, run_id, status="queued", status_message="Analysis queued")
+        queued = update_run(CONFIG, run_id, status="queued", status_message="Analysis queued", actor_user_id=principal["user_id"])
         job = create_job_record(CONFIG, queued, principal["user_id"])
     queued["job"] = job
     return queued
@@ -1477,7 +1558,7 @@ def analyze_run(run_id: str, request: Request) -> dict:
     run = get_run(CONFIG, run_id)
     project = project_for_run(run)
     assert_project_access(CONFIG, project, principal, "analyze")
-    return run_analysis_workflow(run_id)
+    return run_analysis_workflow(run_id, actor_user_id=principal["user_id"])
 
 
 @app.post("/api/runs/{run_id}/recommendation")
@@ -1552,11 +1633,12 @@ def retry_run(run_id: str, request: Request) -> dict:
         retry["run_id"],
         status="retrying",
         status_message="Retry created from failed run",
+        actor_user_id=principal["user_id"],
         inputs=retry["inputs"],
     )
     if source_run.get("error_code") == "missing_dem" or first_valid_dem(retry) is None:
         return retry
-    retry = update_run(CONFIG, retry["run_id"], status="queued", status_message="Retry queued")
+    retry = update_run(CONFIG, retry["run_id"], status="queued", status_message="Retry queued", actor_user_id=principal["user_id"])
     retry["job"] = create_job_record(CONFIG, retry, principal["user_id"])
     return retry
 
@@ -1571,7 +1653,7 @@ def cancel_run(run_id: str, request: Request) -> dict:
         run = get_run(CONFIG, run_id)
         if run["status"] not in {"created", "queued", "running"}:
             raise HTTPException(status_code=400, detail="Only created, queued, or running runs can be canceled")
-        return update_run(CONFIG, run_id, status="canceled", status_message="Run canceled")
+        return update_run(CONFIG, run_id, status="canceled", status_message="Run canceled", actor_user_id=principal["user_id"])
 
 
 @app.post("/api/runs/{run_id}/report")
@@ -1609,7 +1691,8 @@ def generate_report(run_id: str, request: Request) -> dict:
     )
 
     outputs["report_md"] = str(report_path)
-    metadata = update_run(CONFIG, run_id, status="reported", status_message="Report generated", outputs=outputs)
+    metadata = update_run(CONFIG, run_id, status="reported", status_message="Report generated", outputs=outputs, actor_user_id=principal["user_id"])
+    append_project_audit_event(CONFIG, project["id"], "report.generated", principal["user_id"], {"run_id": run_id, "run_name": metadata.get("name", run_id)})
     metadata["report_url"] = f"/api/runs/{run_id}/outputs/report_md/download"
     return metadata
 
@@ -1742,6 +1825,17 @@ def project_page(project_id: str, request: Request) -> str:
         "</tr>"
         for run in runs
     ) or "<tr><td colspan='7'>No runs yet</td></tr>"
+    timeline = sorted(
+        (public_timeline_event(event) for event in list_project_audit_events(CONFIG, project_id)),
+        key=lambda event: (event.get("created_at", ""), event.get("id", "")),
+        reverse=True,
+    )[:50]
+    timeline_rows = "\n".join(
+        f"<li><time>{escape(item.get('created_at', ''))}</time> "
+        f"<strong>{escape(item.get('event_type', '').replace('.', ' ').replace('_', ' '))}</strong> "
+        f"{escape(str(item.get('details', {}).get('message') or item.get('details', {}).get('status') or item.get('details', {}).get('run_name') or item.get('details', {}).get('name') or ''))}</li>"
+        for item in timeline
+    ) or "<li>No project activity yet</li>"
     return f"""
 <!doctype html>
 <html lang="en">
@@ -1772,6 +1866,8 @@ def project_page(project_id: str, request: Request) -> str:
       <thead><tr><th>Name</th><th>Status</th><th>Owner</th><th>Created</th><th>Updated</th><th>Files</th><th>Outputs</th></tr></thead>
       <tbody>{run_rows}</tbody>
     </table>
+    <h2>Project timeline</h2>
+    <ol>{timeline_rows}</ol>
   </body>
 </html>
 """
@@ -2042,6 +2138,7 @@ async def upload_run_file_form(project_id: str, run_id: str, request: Request) -
                 "content_type": form.get("content_type", [""])[0] or None,
             }
         ],
+        actor_user_id=principal["user_id"],
     )
     return HTMLResponse(f"<meta http-equiv='refresh' content='0; url=/runs/{run_id}'>")
 
@@ -2075,7 +2172,7 @@ async def upload_dem_compat(
                 if received > CONFIG.max_upload_file_bytes:
                     raise upload_error("file_too_large", f"{normalized} exceeds the {CONFIG.max_upload_file_bytes} byte file limit", normalized, 413)
                 await handle.write(chunk)
-        return (await run_in_threadpool(ingest_file_paths, CONFIG, run, [(filename, path, request.headers.get("content-type"))]))["run"]
+        return (await run_in_threadpool(ingest_file_paths, CONFIG, run, [(filename, path, request.headers.get("content-type"))], actor_user_id=principal["user_id"]))["run"]
 
 
 def copy_sample_dem_to_run_compat(run_id: str, sample_dem: Path = Path("data/sample/sample_dem.tif")) -> dict:
