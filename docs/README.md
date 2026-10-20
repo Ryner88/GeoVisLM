@@ -1,6 +1,10 @@
 # GeoVisLM Documentation
 
 - `planning/`: active, future, and completed task tracking
+- `planning/AI_ROADMAP.md`: Phase 0 verification and proposed AI Phases 1–9
+- `DATA_SOURCES.md`: provider selection, provenance, access, and licensing register
+- `SECRETS_AND_PROVIDER_SECURITY.md`: provider credentials and secure acquisition plan
+- `DATA_PRIVACY.md`: data flows, project privacy, retention, and later model-provider gates
 - `operations/RUN_MODEL.md`: project, run, file metadata, status, retry, and ownership model
 - `operations/FILE_INGESTION_POLICY.md`: supported uploads, Shapefile bundles, validation, limits, and cleanup policy
 - `operations/SECURITY_AND_PERMISSIONS.md`: auth, project permissions, path traversal, and upload safety policy

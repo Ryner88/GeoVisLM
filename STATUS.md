@@ -1,99 +1,61 @@
 # GeoVisLM Project Status
 
-Last reviewed: 2026-09-22
+Last reviewed: 2026-10-19
 
-## Executive Summary
+## Repository and operations
 
-GeoVisLM's application and operational workflow are implemented and locally
-healthy. Merged `main` at `57edeb9` passes the full `82`-test suite. Production
-recovery is validated and its non-sensitive evidence is versioned in the
-repository.
-
-The GeoMiniLM recommendation feature is integrated into the dashboard behind
-an explicit user-approval step. However, the current GeoMiniLM candidate is
-not approved for production use: its latest sealed shadow-set gate failed.
-Feature availability and model production approval are tracked separately.
-
-## Current State
-
-| Area | Status | Evidence / limitation |
+| Work | Repository status | Operational status |
 | --- | --- | --- |
-| Repository baseline | Healthy | Recovery PR #6 merged as `57edeb9`; month-end evidence follows in a focused PR |
-| Automated tests | Passing | `82 passed in 16.11s` on merged `main`, 2026-09-22 |
-| Terrain workflow | Implemented | DEM upload, slope, hillshade, risk classification, maps, and reports |
-| Flood and wildfire workflows | Implemented | Filesystem workflows and versioned dashboard templates |
-| Dashboard operations | Implemented | Projects, runs, uploads, queue/worker, outputs, previews, and reports |
-| Authentication and collaboration | Implemented | First-party auth, project sharing, audit events, and report comments |
-| Workflow templates | Implemented | Versioned terrain, flood-risk, and wildfire-risk templates tracked per run |
-| GeoMiniLM dashboard feature | Implemented in repository; production deploy pending | Prime remains at `90c089b`, where recommendation routes return 404; deploy/revalidation tracked in issue #8 |
-| GeoMiniLM production candidate | Blocked | Latest gate scored `0.4783`; required `0.7600`; 14/15 threshold failures |
-| Prime deployment | Healthy but behind `main` | Live dashboard, worker, PostGIS, auth, sharing, comments, and upload/analysis/output passed on 2026-09-22; GeoMiniLM approval route is not deployed |
-| Production recovery | Validated | PostGIS and 86 retained files restored in isolation; database, manifests, metadata links, and 36 API downloads verified |
-| ParaView | Partial / environment-dependent | Entry point exists, but ParaView is not included in project requirements |
+| Encrypted off-host backup | PR #12 was reverted by #13; the implementation was reapplied and fixed in [PR #14](https://github.com/Ryner88/GeoVisLM/pull/14) and [PR #15](https://github.com/Ryner88/GeoVisLM/pull/15). | [Issue #5](https://github.com/Ryner88/GeoVisLM/issues/5) remains open. The October 18 B2-only recovery drill passed. Alert receipt, retention deletion, current timer state, and continuing scheduled success still need verification. |
+| Production deployment and GeoMiniLM approval boundary | [Issue #8](https://github.com/Ryner88/GeoVisLM/issues/8) closed | Its approval-boundary check passed on a prior deployment. Verify on Prime that the currently deployed commit matches current `main`; the October 18 backup came from `90c089b`. This does not approve the current GeoMiniLM model candidate. |
+| Batch-upload improvements | [Issue #7](https://github.com/Ryner88/GeoVisLM/issues/7) closed; [PR #16](https://github.com/Ryner88/GeoVisLM/pull/16) merged | Verify configured quotas and recovery under load before claiming live readiness. |
+| Collaboration notifications | [Issue #9](https://github.com/Ryner88/GeoVisLM/issues/9) closed; [PR #17](https://github.com/Ryner88/GeoVisLM/pull/17) merged | Repository work complete; live status has not been checked here. |
 
-## Current Priority
+There is no GitHub issue #10 in this repository. The demo and portfolio work
+remains an untracked future task in `docs/planning/FUTURE_TASKS.md`.
 
-`[NEXT]` Improve the new-analysis and batch-upload experience (GitHub issue
-`#7`).
+## Current work and AI planning
 
-This work should improve multi-file datasets and shapefile bundles, validation
-feedback, upload progress, quotas, and abandoned-upload cleanup behavior.
+Complete Phase 0 verification: confirm Prime runs current `main`, inspect the
+backup timer on the live host, finish issue #5 alert and retention acceptance,
+and test upload quotas under load. The October 18 B2-only restore passed, but
+its source commit was `90c089b`; it does not establish that current `main` is
+deployed. The runbook requires production scheduling to remain disabled until
+all live acceptance checks pass. No repository evidence confirms that the
+timer has been enabled.
 
-## GeoMiniLM Boundary
+Next, establish the provider and licensing register, select bare-earth USGS
+3DEP and Geofabrik OSM inputs for the first U.S. exposure milestone, and set
+provider-security and provenance rules. `docs/DATA_SOURCES.md`,
+`docs/SECRETS_AND_PROVIDER_SECURITY.md`, and `docs/DATA_PRIVACY.md` record
+those planning requirements. OpenTopography, Census, FIRMS, Hugging Face, and
+hosted LLM credentials are not prerequisites for the first milestone.
 
-The August 28 one-shot shadow-set result is the current production decision:
+The AI phases are **Proposed / Not Started**, with no implementation dates or
+GitHub issues assigned. Phase 1, evidence-grounded exposure analysis, is the
+first AI development priority when implementation begins. See
+`docs/planning/AI_ROADMAP.md` for scope and sequencing. Issues #7, #8, and #9
+are closed repository work, not open AI development blockers.
 
-- Candidate score: `0.4783`
-- Required score: `0.7600`
-- Threshold failures: `14/15`
-- Expected calibration error: `0.8302`
-- Decision: failed; candidate must not be promoted as production-approved
+The current GeoMiniLM candidate remains outside the production approval gate.
+Its August 2026 sealed evaluation failed; see
+`docs/GEOMINILM_PRODUCTION_ACCEPTANCE_2026-08-28.md` for the decision record.
+The completed deployment and approval-boundary verification under issue #8
+does not change that model result.
 
-The retired shadow set and frozen regression set must not be used for tuning.
-A future candidate requires a new development-only cycle and a different
-sealed shadow set for its next formal production decision.
+## Historical verification records
 
-## Near-Term Backlog
+- The 2026-09-22 on-host production backup and isolated restore drill passed.
+  Evidence: `docs/operations/evidence/production-drill-20260922/` and
+  `docs/operations/BACKUP_RESTORE.md`.
+- The 2026-10-03 Prime deployment and approval-boundary validation is recorded
+  in issue #8. Its closure also records a 2026-10-17 service-health recheck.
+- Off-host replication procedures and acceptance steps are documented in
+  `docs/operations/OFFHOST_BACKUP.md`.
+- The October 18 independent B2 restore passed against a backup sourced from
+  `90c089b`. Its recorded regression run passed 111 tests. See
+  `docs/operations/evidence/offhost-recovery-20261018/README.md`. This is a
+  dated result, not a current test-suite count.
 
-1. Encrypted off-host backup replication (`#5`, high-priority operations).
-2. Deploy current `main` and revalidate the live approval boundary (`#8`,
-   high-priority operations).
-3. New analysis and batch-upload experience improvements (`#7`, next feature).
-4. Project timeline and collaboration notifications (`#9`, backlog).
-5. Demo video and portfolio package (`#10`, backlog).
-6. A new GeoMiniLM development cycle followed by a newly sealed production
-   gate; this is not yet scheduled as active work.
-
-## Latest Production Recovery Drill
-
-The 2026-09-22 Prime drill passed. The retained backup set is
-`/root/geovis-backups/production-drill-20260922T175546Z`. Total backup time was
-`0.563 s`; isolated restore time was `10.612 s`. Database fingerprints, all 86
-file manifests, 156 metadata references, and 36 API artifact downloads matched.
-Production data and runtime fingerprints were unchanged. See
-`docs/operations/BACKUP_RESTORE.md` for retention and cleanup and
-`docs/operations/evidence/production-drill-20260922/` for versioned evidence.
-
-## Latest Live Deployment Validation
-
-Prime was revalidated on 2026-09-22. Public dashboard availability, local
-readiness, dashboard/worker/PostGIS health, first-party and bearer
-authentication, project sharing, report comments, and a two-file
-upload-to-worker-to-six-download workflow passed. Temporary validation records
-were removed and logs contained no runtime errors.
-
-Prime still runs `90c089b`; its recommendation endpoint returns 404. The
-GeoMiniLM explicit-approval boundary is implemented on current `main` but must
-be deployed and revalidated under issue `#8`. This deployment gap is distinct
-from the failed model production gate: deploying the approval UI/API does not
-approve the current model candidate.
-
-## Verification Snapshot
-
-Run on 2026-09-22:
-
-```bash
-timeout 300 .venv/bin/python -m pytest -q
-```
-
-Result: `82 passed in 16.11s` on merged revision `57edeb9`.
+These are dated results. Consult the operational records for current service
+and backup health.

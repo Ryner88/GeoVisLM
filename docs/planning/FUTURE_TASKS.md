@@ -14,19 +14,7 @@ Status labels:
 
 ## Future Queue
 
-### 6. `[TODO]` Add Project Timeline and Collaboration Notifications
-
-Goal: make collaboration activity visible and actionable across projects.
-
-Build when active:
-
-* Add a unified history for uploads, runs, outputs, invitations, membership
-  changes, and report comments.
-* Notify users about invitations.
-* Notify users about completed runs.
-* Notify users about comment activity.
-
-### 7. `[TODO]` Create GeoVisLM Demo Video and Portfolio Page
+### `[TODO]` Create GeoVisLM Demo Video and Portfolio Page
 
 Goal: create a polished demo package after the workflow and AI-assisted
 experience are stable.
@@ -52,3 +40,6 @@ Acceptance criteria:
 
 Maintenance note: the pending Prime kernel reboot remains separate maintenance,
 not a GeoVisLM feature priority.
+
+The proposed AI phases are maintained in `AI_ROADMAP.md`. They are not
+existing GitHub issues or active tasks.

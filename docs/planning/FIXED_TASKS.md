@@ -8,6 +8,21 @@ Status labels:
 
 ## Completed Work
 
+### `[DONE]` Close Repository Work for Issues #7, #8, and #9
+
+- [Issue #7](https://github.com/Ryner88/GeoVisLM/issues/7): new-analysis and
+  batch-upload improvements are complete.
+- [Issue #8](https://github.com/Ryner88/GeoVisLM/issues/8): Prime deployment
+  and the GeoMiniLM recommendation approval boundary were verified and the
+  issue was closed. This did not approve the current model candidate.
+- [Issue #9](https://github.com/Ryner88/GeoVisLM/issues/9): project timeline
+  and collaboration notifications are complete.
+
+Backup-related PR #12 was reverted by #13. The implementation was reapplied
+and fixed through PRs #14 and #15. The October 18 independent B2 restore
+passed; off-host operational acceptance is still tracked by open issue
+[#5](https://github.com/Ryner88/GeoVisLM/issues/5).
+
 ### `[DONE]` Validate Production Backup, Restore, and Retention
 
 Completed on Prime on 2026-09-22:

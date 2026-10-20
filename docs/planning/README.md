@@ -6,6 +6,7 @@ Project planning and task history live here:
 - `PRIORITY_TASKS.md`: active work queue
 - `FUTURE_TASKS.md`: backlog and deferred work
 - `FIXED_TASKS.md`: completed work log
+- `AI_ROADMAP.md`: Phase 0 verification and proposed Phases 1–9
 
 Planning rule: keep only active or immediately next work in
 `PRIORITY_TASKS.md`. Move completed work to `FIXED_TASKS.md`, and keep deferred
