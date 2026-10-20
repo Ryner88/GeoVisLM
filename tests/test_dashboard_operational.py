@@ -364,6 +364,7 @@ def test_project_invitations_grant_read_only_access_and_can_be_revoked(app_modul
     audit = request(app_module.app, "get", f"/api/projects/{project['id']}/audit-events", headers=auth(alice["id"]))
     assert audit.status_code == 200
     assert [event["event_type"] for event in audit.json()["events"]] == [
+        "project.created",
         "project.member_invited",
         "project.member_revoked",
     ]
